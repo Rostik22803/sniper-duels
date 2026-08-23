@@ -1,7 +1,7 @@
 --[[
     OCEL HUB - Sniper Duels
     100% Local Custom UI Framework (No External Loadstring)
-    With Box, Name, Healthbar ESP, Color Picker Grid, Config Management, and stability fixes.
+    Ultimate stability: fixed team check bug, improved wall check, restored skeletons, added minimize.
 --]]
 
 -- Safety check: prevent duplicate run
@@ -28,7 +28,10 @@ local LocalPlayer = Players.LocalPlayer
 local Camera = Workspace.CurrentCamera
 local Mouse = LocalPlayer:GetMouse()
 
--- Config Management
+-- Config Folder
+local CONFIG_FILE = "OcelHub_SniperDuels.json"
+
+-- Default Settings Table
 local Config = {
     -- Combat
     SilentAim = false,
@@ -41,7 +44,7 @@ local Config = {
     ShowFOV = false,
     FOVColor = {0, 255, 0},
     FOVRadius = 120,
-    TeamCheck = true,
+    TeamCheck = false, -- Default to false to avoid team issues
     WallCheck = true,
     HitPart = "Head",
     
@@ -49,7 +52,7 @@ local Config = {
     NoRecoil = false,
     NoSpread = false,
     
-    -- Visuals (Box, Health, Name, Chams)
+    -- Visuals (Box, HP, Names, Chams, Skeletons)
     BoxESP = false,
     HealthESP = false,
     NameESP = false,
@@ -59,6 +62,8 @@ local Config = {
     TeamColor = {0, 255, 0},
     DummyESP = false,
     DummyColor = {255, 255, 255},
+    SkeletonESP = false,
+    SkeletonColor = {255, 255, 255},
     
     -- Local Visuals
     SelfChams = false,
@@ -127,9 +132,10 @@ loadConfig("default")
 -- Visuals Storage & Tracking
 local ESP_BillboardGuis = {}
 local Highlights = {}
+local Skeletons = {}
 local OriginalViewmodelProps = {}
 
--- Drawing FOV Circle (Fixed: locked to center)
+-- Drawing FOV Circle
 local FOVCircle = nil
 pcall(function()
     FOVCircle = Drawing.new("Circle")
@@ -151,20 +157,25 @@ RunService.RenderStepped:Connect(function()
     end
 end)
 
--- Helper: Wall Check
+-- Helper: Wall Check (Fixed & Safe)
 local function isVisible(targetPart, character)
     if not Config.WallCheck then return true end
-    local ignoreList = {LocalPlayer.Character, character}
+    
+    local origin = Camera.CFrame.Position
+    local direction = targetPart.Position - origin
     local raycastParams = RaycastParams.new()
     raycastParams.FilterType = Enum.RaycastFilterType.Exclude
-    raycastParams.FilterDescendantsInstances = ignoreList
+    raycastParams.FilterDescendantsInstances = {LocalPlayer.Character, character, Camera}
     raycastParams.IgnoreWater = true
     
-    local raycastResult = Workspace:Raycast(Camera.CFrame.Position, targetPart.Position - Camera.CFrame.Position, raycastParams)
-    return raycastResult == nil
+    local hit = Workspace:Raycast(origin, direction, raycastParams)
+    if hit and hit.Instance and hit.Instance.CanCollide and hit.Instance.Transparency < 0.8 then
+        return false
+    end
+    return true
 end
 
--- Helper: Find target
+-- Helper: Find target (Fixed Team Check nil comparison)
 local function getClosestPlayer()
     local closestTarget = nil
     local shortestDistance = math.huge
@@ -173,7 +184,11 @@ local function getClosestPlayer()
     local function checkCharacter(char, isPlayer, playerObj)
         if not char or not char:FindFirstChild("Humanoid") or not char:FindFirstChild(Config.HitPart) then return end
         if char.Humanoid.Health <= 0 then return end
-        if isPlayer and Config.TeamCheck and playerObj.Team == LocalPlayer.Team then return end
+        
+        -- Fix: Check team only if team is not nil, to avoid ignoring Neutral/No-team players
+        if isPlayer and Config.TeamCheck and playerObj.Team ~= nil and playerObj.Team == LocalPlayer.Team then 
+            return 
+        end
         
         local hitPart = char[Config.HitPart]
         local screenPos, onScreen = Camera:WorldToViewportPoint(hitPart.Position)
@@ -249,7 +264,7 @@ task.spawn(function()
                     local shouldShoot = false
                     if isDummy then shouldShoot = true
                     elseif targetPlayer and targetPlayer ~= LocalPlayer then
-                        if not Config.TeamCheck or targetPlayer.Team ~= LocalPlayer.Team then shouldShoot = true end
+                        if not Config.TeamCheck or targetPlayer.Team == nil or targetPlayer.Team ~= LocalPlayer.Team then shouldShoot = true end
                     end
                     if shouldShoot and mouse1click then mouse1click() end
                 end
@@ -296,7 +311,7 @@ RunService.RenderStepped:Connect(function()
     end
 end)
 
--- Viewmodel Chams (Hands & Weapon) with Property Restoration
+-- Viewmodel Chams (Hands & Weapon)
 local function applyChamsToPart(part, isArm)
     if not OriginalViewmodelProps[part] then
         OriginalViewmodelProps[part] = {
@@ -344,24 +359,103 @@ task.spawn(function()
                 end
             end
         else
-            -- Restore all if viewmodel doesn't exist
             for part, _ in pairs(OriginalViewmodelProps) do
-                if part.Parent then
-                    restorePart(part)
-                else
-                    OriginalViewmodelProps[part] = nil
-                end
+                if part.Parent then restorePart(part) else OriginalViewmodelProps[part] = nil end
             end
         end
     end
 end)
 
--- 2D Billboard GUI ESP (Box, Name, Healthbar)
+-- Skeleton drawing helper
+local function createLine()
+    local line = nil
+    pcall(function()
+        line = Drawing.new("Line")
+        line.Thickness = 1.5
+        line.Color = toColor3(Config.SkeletonColor)
+        line.Transparency = 1
+        line.Visible = false
+    end)
+    return line
+end
+
+local function drawSkeleton(character, isPlayer, playerObj)
+    if Skeletons[character] then return end
+    
+    local lines = {
+        HeadToTorso = createLine(),
+        TorsoToLeftArm = createLine(),
+        TorsoToRightArm = createLine(),
+        TorsoToLeftLeg = createLine(),
+        TorsoToRightLeg = createLine()
+    }
+    
+    if not lines.HeadToTorso then return end
+    Skeletons[character] = lines
+    
+    local conn
+    conn = RunService.RenderStepped:Connect(function()
+        if not character or not character.Parent or not Config.SkeletonESP then
+            for _, l in pairs(lines) do if l then l.Visible = false end end
+            if not Config.SkeletonESP and (not character or not character.Parent) then
+                for _, l in pairs(lines) do if l then l:Remove() end end
+                Skeletons[character] = nil
+                conn:Disconnect()
+            end
+            return
+        end
+        
+        local isEnabled = false
+        if isPlayer then
+            if playerObj.Team == LocalPlayer.Team then
+                isEnabled = Config.TeamESP
+            else
+                isEnabled = Config.EnemyESP
+            end
+        else
+            isEnabled = Config.DummyESP
+        end
+        
+        local isR15 = character:FindFirstChild("UpperTorso") ~= nil
+        local head = character:FindFirstChild("Head")
+        local torso = character:FindFirstChild(isR15 and "UpperTorso" or "Torso")
+        local leftArm = character:FindFirstChild(isR15 and "LeftHand" or "Left Arm")
+        local rightArm = character:FindFirstChild(isR15 and "RightHand" or "Right Arm")
+        local leftLeg = character:FindFirstChild(isR15 and "LeftFoot" or "Left Leg")
+        local rightLeg = character:FindFirstChild(isR15 and "RightFoot" or "Right Leg")
+        
+        if isEnabled and head and torso and leftArm and rightArm and leftLeg and rightLeg then
+            local function setLine(line, part1, part2)
+                if not line then return end
+                local p1, onScreen1 = Camera:WorldToViewportPoint(part1.Position)
+                local p2, onScreen2 = Camera:WorldToViewportPoint(part2.Position)
+                if onScreen1 and onScreen2 then
+                    line.From = Vector2.new(p1.X, p1.Y)
+                    line.To = Vector2.new(p2.X, p2.Y)
+                    line.Color = toColor3(Config.SkeletonColor)
+                    line.Visible = true
+                else
+                    line.Visible = false
+                end
+            end
+            setLine(lines.HeadToTorso, head, torso)
+            setLine(lines.TorsoToLeftArm, torso, leftArm)
+            setLine(lines.TorsoToRightArm, torso, rightArm)
+            setLine(lines.TorsoToLeftLeg, torso, leftLeg)
+            setLine(lines.TorsoToRightLeg, torso, rightLeg)
+        else
+            for _, l in pairs(lines) do if l then l.Visible = false end end
+        end
+    end)
+    table.insert(_G.ESP_Connections, conn)
+end
+
+-- 2D Billboard GUI ESP
 local function createESP(character, isPlayer, playerObj)
     if ESP_BillboardGuis[character] then return end
     
-    local hrp = character:WaitForChild("HumanoidRootPart", 5)
-    local hum = character:WaitForChild("Humanoid", 5)
+    local hrp = character:WaitForChild("HumanoidRootPart", 10)
+    local hum = character:WaitForChild("Humanoid", 10)
     if not hrp or not hum then return end
     
     local billboard = Instance.new("BillboardGui")
@@ -409,7 +503,7 @@ local function createESP(character, isPlayer, playerObj)
     local highlight = Instance.new("Highlight")
     highlight.Adornee = character
     highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-    highlight.Parent = character -- Parented to character for perfect Roblox highlight rendering
+    highlight.Parent = character
     
     local conn
     conn = RunService.RenderStepped:Connect(function()
@@ -421,19 +515,18 @@ local function createESP(character, isPlayer, playerObj)
             return
         end
         
-        -- Team/Enemy/Dummy color determination
         local color = toColor3(Config.DummyColor)
         local espEnabled = false
         local chamsEnabled = false
         
         if isPlayer then
-            if playerObj.Team == LocalPlayer.Team then
+            if playerObj.Team ~= nil and playerObj.Team == LocalPlayer.Team then
                 color = toColor3(Config.TeamColor)
                 espEnabled = Config.TeamESP
-                chamsEnabled = Config.TeamESP and Config.EnemyESP -- Shared option logic
+                chamsEnabled = Config.TeamESP
             else
                 color = toColor3(Config.EnemyColor)
-                espEnabled = true -- ESP always on for enemies if global visuals are on
+                espEnabled = Config.EnemyESP
                 chamsEnabled = Config.EnemyESP
             end
         else
@@ -468,6 +561,9 @@ local function createESP(character, isPlayer, playerObj)
     table.insert(_G.ESP_Connections, conn)
     ESP_BillboardGuis[character] = billboard
     Highlights[character] = highlight
+    
+    -- Connect Skeletons
+    drawSkeleton(character, isPlayer, playerObj)
 end
 
 local function trackPlayer(player)
@@ -636,7 +732,7 @@ CoverFrame.BorderSizePixel = 0
 CoverFrame.Parent = TitleBar
 
 local TitleText = Instance.new("TextLabel")
-TitleText.Size = UDim2.new(1, -20, 1, 0)
+TitleText.Size = UDim2.new(1, -60, 1, 0)
 TitleText.Position = UDim2.new(0, 15, 0, 0)
 TitleText.BackgroundTransparency = 1
 TitleText.Text = "Ocel Hub | Sniper Duels"
@@ -645,6 +741,21 @@ TitleText.Font = Enum.Font.SourceSansBold
 TitleText.TextSize = 15
 TitleText.TextXAlignment = Enum.TextXAlignment.Left
 TitleText.Parent = TitleBar
+
+-- Minimize Button (New: Collapses window)
+local MinimizeButton = Instance.new("TextButton")
+MinimizeButton.Size = UDim2.new(0, 25, 0, 25)
+MinimizeButton.Position = UDim2.new(1, -65, 0.5, -12)
+MinimizeButton.BackgroundColor3 = Color3.fromRGB(45, 45, 60)
+MinimizeButton.Text = "-"
+MinimizeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+MinimizeButton.Font = Enum.Font.SourceSansBold
+MinimizeButton.TextSize = 16
+MinimizeButton.Parent = TitleBar
+
+local MinCorner = Instance.new("UICorner")
+MinCorner.CornerRadius = UDim.new(0, 5)
+MinCorner.Parent = MinimizeButton
 
 -- Close Button
 local CloseButton = Instance.new("TextButton")
@@ -688,6 +799,53 @@ Content.Size = UDim2.new(1, -140, 1, -35)
 Content.Position = UDim2.new(0, 140, 0, 35)
 Content.BackgroundTransparency = 1
 Content.Parent = MainFrame
+
+-- Minimize Actions
+local isMinimized = false
+local function toggleMinimize()
+    isMinimized = not isMinimized
+    if isMinimized then
+        MainFrame:TweenSize(UDim2.new(0, 580, 0, 35), "Out", "Quad", 0.2, true)
+        Sidebar.Visible = false
+        Content.Visible = false
+        MinimizeButton.Text = "+"
+    else
+        MainFrame:TweenSize(UDim2.new(0, 580, 0, 420), "Out", "Quad", 0.2, true)
+        task.delay(0.15, function()
+            Sidebar.Visible = true
+            Content.Visible = true
+        end)
+        MinimizeButton.Text = "-"
+    end
+end
+
+MinimizeButton.MouseButton1Click:Connect(toggleMinimize)
+
+-- Keyboard toggle (Insert key to toggle visibility)
+UserInputService.InputBegan:Connect(function(input, processed)
+    if not processed and input.KeyCode == Enum.KeyCode.Insert then
+        MainFrame.Visible = not MainFrame.Visible
+    end
+end)
+
+-- Floating Mini Toggle Button (Always on screen to show/hide menu easily)
+local FloatingToggle = Instance.new("TextButton")
+FloatingToggle.Size = UDim2.new(0, 70, 0, 25)
+FloatingToggle.Position = UDim2.new(0, 10, 0, 10)
+FloatingToggle.BackgroundColor3 = Color3.fromRGB(22, 22, 30)
+FloatingToggle.Text = "Ocel Hub"
+FloatingToggle.TextColor3 = Color3.fromRGB(0, 170, 255)
+FloatingToggle.Font = Enum.Font.SourceSansBold
+FloatingToggle.TextSize = 12
+FloatingToggle.Parent = OcelHub
+
+local ftCorner = Instance.new("UICorner")
+ftCorner.CornerRadius = UDim.new(0, 5)
+ftCorner.Parent = FloatingToggle
+
+FloatingToggle.MouseButton1Click:Connect(function()
+    MainFrame.Visible = not MainFrame.Visible
+end)
 
 -- Tab Frames Table
 local Tabs = {}
@@ -931,20 +1089,9 @@ local function addDropdown(parent, text, options, configKey, callback)
     end)
 end
 
--- Premium Color Palette Grid component (replaces the old click box)
 local function addColorPicker(parent, text, configKey, callback)
     local container = createContainer(parent, 55)
-    
-    local label = Instance.new("TextLabel")
-    label.Size = UDim2.new(0.4, 0, 1, 0)
-    label.Position = UDim2.new(0.04, 0, 0, 0)
-    label.BackgroundTransparency = 1
-    label.Text = text
-    label.TextColor3 = Color3.fromRGB(240, 240, 240)
-    label.Font = Enum.Font.SourceSans
-    label.TextSize = 14
-    label.TextXAlignment = Enum.TextXAlignment.Left
-    label.Parent = container
+    addLabel(container, text)
     
     local paletteGrid = Instance.new("Frame")
     paletteGrid.Size = UDim2.new(0, 180, 0, 40)
@@ -975,7 +1122,6 @@ local function addColorPicker(parent, text, configKey, callback)
         corner.CornerRadius = UDim.new(0, 4)
         corner.Parent = cBox
         
-        -- Selection highlight border
         local selectFrame = Instance.new("Frame")
         selectFrame.Size = UDim2.new(1, 4, 1, 4)
         selectFrame.Position = UDim2.new(0, -2, 0, -2)
@@ -1003,7 +1149,6 @@ local function addColorPicker(parent, text, configKey, callback)
     end
 end
 
--- Text Input Helper (for Config Name)
 local function addTextBox(parent, text, placeholder, callback)
     local container = createContainer(parent, 35)
     addLabel(container, text)
@@ -1032,7 +1177,6 @@ local function addTextBox(parent, text, placeholder, callback)
     end)
 end
 
--- Action Button Helper (for Config Save / Load)
 local function addButton(parent, text, callback)
     local container = createContainer(parent, 35)
     
@@ -1069,24 +1213,26 @@ addSlider(mainPage, "Spin Speed", 10, 150, "SpinSpeed", function(v) end)
 addToggle(mainPage, "Show FOV", "ShowFOV", function(v) end)
 addColorPicker(mainPage, "FOV Circle Color", "FOVColor", function(v) end)
 addSlider(mainPage, "FOV Radius", 10, 600, "FOVRadius", function(v) end)
-addToggle(mainPage, "Team Check", "TeamCheck", function(v) end)
-addToggle(mainPage, "Wall Check", "WallCheck", function(v) end)
+addToggle(mainPage, "Team Check (Командный чек)", "TeamCheck", function(v) end)
+addToggle(mainPage, "Wall Check (Проверка стен)", "WallCheck", function(v) end)
 addDropdown(mainPage, "Hit Part", {"Head", "Torso", "HumanoidRootPart"}, "HitPart", function(v) end)
 
 -- Gun Mods
 addToggle(mainPage, "No Recoil (Без отдачи)", "NoRecoil", function(v) end)
 addToggle(mainPage, "No Spread (Без разброса)", "NoSpread", function(v) end)
 
--- Visuals Tab (Box, HP, Names, Chams)
+-- Visuals Tab
 addToggle(visualPage, "Box ESP (2D Боксы)", "BoxESP", function(v) end)
 addToggle(visualPage, "Health ESP (Здоровье)", "HealthESP", function(v) end)
-addToggle(visualPage, "Name ESP (Ники и дистанция)", "NameESP", function(v) end)
+addToggle(visualPage, "Name ESP (Ники)", "NameESP", function(v) end)
 addToggle(visualPage, "Enemy Visuals (Враги)", "EnemyESP", function(v) end)
 addColorPicker(visualPage, "Enemy ESP Color", "EnemyColor", function(v) end)
 addToggle(visualPage, "Team Visuals (Союзники)", "TeamESP", function(v) end)
 addColorPicker(visualPage, "Team ESP Color", "TeamColor", function(v) end)
 addToggle(visualPage, "Dummy Visuals (Манекены)", "DummyESP", function(v) end)
 addColorPicker(visualPage, "Dummy ESP Color", "DummyColor", function(v) end)
+addToggle(visualPage, "Skeleton ESP (Скелеты)", "SkeletonESP", function(v) end)
+addColorPicker(visualPage, "Skeleton ESP Color", "SkeletonColor", function(v) end)
 
 -- Local Visuals Tab
 addToggle(localPage, "Chams on Self (Чамсы на себя)", "SelfChams", function(v) end)
@@ -1119,7 +1265,6 @@ addButton(settingsPage, "Load Config (Загрузить)", function()
     for _, h in pairs(Highlights) do h:Destroy() end
     for _, conn in pairs(_G.ESP_Connections) do conn:Disconnect() end
     _G.OcelHubLoaded = nil
-    -- Reload file to load with new config values
     loadstring(readfile("sniper_duels.lua"))()
 end)
 addToggle(settingsPage, "Autoload Config (Автозагрузка)", "AutoLoad", function(v) end)
