@@ -1,7 +1,7 @@
 --[[
     OCEL HUB - Sniper Duels
     100% Local Custom UI Framework (No External Loadstring)
-    With Toggles, Sliders, Dropdowns, Color Pickers, Config Save/Load & Autoload.
+    Fixed Enum.Font crash and improved JSON robustness
 --]]
 
 -- Safety check: prevent duplicate run
@@ -82,13 +82,18 @@ local Config = {
 
 -- Convert color table helper
 local function toColor3(tbl)
-    return Color3.fromRGB(tbl[1], tbl[2], tbl[3])
+    if type(tbl) == "table" then
+        return Color3.fromRGB(tbl[1] or 255, tbl[2] or 255, tbl[3] or 255)
+    elseif typeof(tbl) == "Color3" then
+        return tbl
+    end
+    return Color3.fromRGB(255, 255, 255)
 end
 
 -- Save / Load Functions
 local function saveConfig()
     if writefile then
-        local success, err = pcall(function()
+        pcall(function()
             writefile(CONFIG_FILE, HttpService:JSONEncode(Config))
         end)
     end
@@ -581,8 +586,8 @@ TitleText.Position = UDim2.new(0, 15, 0, 0)
 TitleText.BackgroundTransparency = 1
 TitleText.Text = "Ocel Hub | Sniper Duels"
 TitleText.TextColor3 = Color3.fromRGB(255, 255, 255)
-TitleText.Font = Enum.Font.Goblin -- Modern/Sci-Fi font
-TitleText.TextSize = 14
+TitleText.Font = Enum.Font.SourceSansBold
+TitleText.TextSize = 15
 TitleText.TextXAlignment = Enum.TextXAlignment.Left
 TitleText.Parent = TitleBar
 
@@ -886,7 +891,6 @@ local function addColorPicker(parent, text, configKey, callback)
     corner.CornerRadius = UDim.new(0, 4)
     corner.Parent = colorBox
     
-    -- Very simple cycle picker for simplicity/stability in custom code
     local colors = {
         {255, 0, 0}, {0, 255, 0}, {0, 0, 255}, 
         {255, 255, 0}, {255, 0, 255}, {0, 255, 255}, 
