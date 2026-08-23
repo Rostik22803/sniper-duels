@@ -1,6 +1,6 @@
 --[[
     ====================================================================
-    OCEL HUB - SNIPER DUELS [HvH Client] (SINGLE FILE)
+    OCEL HUB - SNIPER DUELS [HvH Client] (FIXED UI & DRAG & SLIDERS)
     ====================================================================
     Game: SNIPER DUELS (https://www.roblox.com/games/109397169461300/SNIPER-DUELS)
     Toggle Menu Key: [RightShift]
@@ -153,27 +153,6 @@ local function IsEnemy(player)
     if not Flags.TeamCheck then return true end
     if not LocalPlayer.Team then return true end
     return player.Team ~= LocalPlayer.Team
-end
-
--- Sound Effects
-local SoundIDs = {
-    Neverlose = "rbxassetid://8679627751",
-    Skeet = "rbxassetid://5633698188",
-    Rust = "rbxassetid://3744330956",
-    Roblox = "rbxassetid://160432334"
-}
-
-local function PlayHitSound()
-    if Flags.HitSound == "None" then return end
-    local id = SoundIDs[Flags.HitSound]
-    if id then
-        local sound = Instance.new("Sound")
-        sound.SoundId = id
-        sound.Volume = 1
-        sound.Parent = SoundService
-        sound:Play()
-        sound.Ended:Connect(function() sound:Destroy() end)
-    end
 end
 
 -- RAGEBOT MODULE
@@ -507,7 +486,9 @@ RunService.RenderStepped:Connect(function()
     end
 end)
 
--- CUSTOM NEVERLOSE / FATALITY GUI
+-- ====================================================================
+-- CUSTOM NEVERLOSE / FATALITY GUI (ROBUST DRAGGING, SLIDERS & BUTTONS)
+-- ====================================================================
 local parentTarget = (gethui and gethui()) or (syn and syn.protect_gui and CoreGui) or CoreGui or LocalPlayer:WaitForChild("PlayerGui")
 if parentTarget:FindFirstChild("OcelHubGui") then parentTarget.OcelHubGui:Destroy() end
 
@@ -516,11 +497,15 @@ ScreenGui.Name = "OcelHubGui"
 ScreenGui.ResetOnSpawn = false
 ScreenGui.Parent = parentTarget
 
+-- Main Container Window
 local MainFrame = Instance.new("Frame")
+MainFrame.Name = "MainFrame"
 MainFrame.Size = UDim2.new(0, 720, 0, 480)
 MainFrame.Position = UDim2.new(0.5, -360, 0.5, -240)
 MainFrame.BackgroundColor3 = Color3.fromRGB(12, 14, 20)
 MainFrame.BorderSizePixel = 0
+MainFrame.Active = true
+MainFrame.ClipsDescendants = true
 MainFrame.Parent = ScreenGui
 
 local MainCorner = Instance.new("UICorner")
@@ -532,10 +517,13 @@ MainStroke.Color = Color3.fromRGB(30, 36, 50)
 MainStroke.Thickness = 1.5
 MainStroke.Parent = MainFrame
 
+-- Header Bar
 local Header = Instance.new("Frame")
+Header.Name = "Header"
 Header.Size = UDim2.new(1, 0, 0, 45)
 Header.BackgroundColor3 = Color3.fromRGB(18, 22, 31)
 Header.BorderSizePixel = 0
+Header.Active = true
 Header.Parent = MainFrame
 
 local HeaderCorner = Instance.new("UICorner")
@@ -550,27 +538,111 @@ Title.Position = UDim2.new(0, 15, 0, 0)
 Title.BackgroundTransparency = 1
 Title.TextColor3 = Color3.fromRGB(240, 240, 245)
 Title.Font = Enum.Font.GothamBold
-Title.TextSize = 16
+Title.TextSize = 15
 Title.TextXAlignment = Enum.TextXAlignment.Left
 Title.Parent = Header
 
--- Dragging logic
-local dragging, dragStart, startPos
-Header.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 then
-        dragging = true; dragStart = input.Position; startPos = MainFrame.Position
-    end
-end)
-UserInputService.InputChanged:Connect(function(input)
-    if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
-        local delta = input.Position - dragStart
-        MainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
-    end
-end)
-Header.InputEnded:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 then dragging = false end
+-- Control Buttons (Minimize & Close)
+local CloseBtn = Instance.new("TextButton")
+CloseBtn.Text = "✕"
+CloseBtn.Size = UDim2.new(0, 30, 0, 30)
+CloseBtn.Position = UDim2.new(1, -38, 0.5, -15)
+CloseBtn.BackgroundColor3 = Color3.fromRGB(220, 50, 50)
+CloseBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+CloseBtn.Font = Enum.Font.GothamBold
+CloseBtn.TextSize = 14
+CloseBtn.Parent = Header
+
+local CloseCorner = Instance.new("UICorner")
+CloseCorner.CornerRadius = UDim.new(0, 6)
+CloseCorner.Parent = CloseBtn
+
+local MinBtn = Instance.new("TextButton")
+MinBtn.Text = "—"
+MinBtn.Size = UDim2.new(0, 30, 0, 30)
+MinBtn.Position = UDim2.new(1, -74, 0.5, -15)
+MinBtn.BackgroundColor3 = Color3.fromRGB(30, 36, 50)
+MinBtn.TextColor3 = Color3.fromRGB(240, 240, 245)
+MinBtn.Font = Enum.Font.GothamBold
+MinBtn.TextSize = 14
+MinBtn.Parent = Header
+
+local MinCorner = Instance.new("UICorner")
+MinCorner.CornerRadius = UDim.new(0, 6)
+MinCorner.Parent = MinBtn
+
+-- Floating Open Button (Appears when window is closed/minimized)
+local OpenBtn = Instance.new("TextButton")
+OpenBtn.Name = "OcelOpenBtn"
+OpenBtn.Text = "<b>OCEL HUB</b>"
+OpenBtn.RichText = true
+OpenBtn.Size = UDim2.new(0, 120, 0, 36)
+OpenBtn.Position = UDim2.new(0, 20, 0, 20)
+OpenBtn.BackgroundColor3 = Color3.fromRGB(12, 14, 20)
+OpenBtn.TextColor3 = Color3.fromRGB(0, 162, 255)
+OpenBtn.Font = Enum.Font.GothamBold
+OpenBtn.TextSize = 13
+OpenBtn.Visible = false
+OpenBtn.Parent = ScreenGui
+
+local OpenCorner = Instance.new("UICorner")
+OpenCorner.CornerRadius = UDim.new(0, 8)
+OpenCorner.Parent = OpenBtn
+
+local OpenStroke = Instance.new("UIStroke")
+OpenStroke.Color = Color3.fromRGB(0, 162, 255)
+OpenStroke.Thickness = 1.5
+OpenStroke.Parent = OpenBtn
+
+CloseBtn.MouseButton1Click:Connect(function()
+    MainFrame.Visible = false
+    OpenBtn.Visible = true
 end)
 
+local isMinimized = false
+MinBtn.MouseButton1Click:Connect(function()
+    isMinimized = not isMinimized
+    MainFrame.Size = isMinimized and UDim2.new(0, 720, 0, 45) or UDim2.new(0, 720, 0, 480)
+end)
+
+OpenBtn.MouseButton1Click:Connect(function()
+    MainFrame.Visible = true
+    OpenBtn.Visible = false
+end)
+
+-- BULLETPROOF DRAGGING LOGIC
+local isDragging = false
+local dragStartPos = Vector2.zero
+local frameStartPos = UDim2.new()
+
+Header.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        isDragging = true
+        dragStartPos = UserInputService:GetMouseLocation()
+        frameStartPos = MainFrame.Position
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if isDragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+        local currentMousePos = UserInputService:GetMouseLocation()
+        local delta = currentMousePos - dragStartPos
+        MainFrame.Position = UDim2.new(
+            frameStartPos.X.Scale,
+            frameStartPos.X.Offset + delta.X,
+            frameStartPos.Y.Scale,
+            frameStartPos.Y.Offset + delta.Y
+        )
+    end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        isDragging = false
+    end
+end)
+
+-- Sidebar & Content Area
 local Sidebar = Instance.new("Frame")
 Sidebar.Size = UDim2.new(0, 160, 1, -45)
 Sidebar.Position = UDim2.new(0, 0, 0, 45)
@@ -617,7 +689,7 @@ local function CreateTab(name, icon)
     local tabFrame = Instance.new("ScrollingFrame")
     tabFrame.Size = UDim2.new(1, 0, 1, 0)
     tabFrame.BackgroundTransparency = 1
-    tabFrame.ScrollBarThickness = 3
+    tabFrame.ScrollBarThickness = 4
     tabFrame.ScrollBarImageColor3 = Color3.fromRGB(0, 162, 255)
     tabFrame.Visible = false
     tabFrame.Parent = ContentArea
@@ -647,7 +719,7 @@ local function CreateTab(name, icon)
 
     Tabs[name] = {Button = btn, Frame = tabFrame}
 
-    -- Auto select first tab
+    -- Select first created tab
     if #Sidebar:GetChildren() == 3 then
         tabFrame.Visible = true
         btn.TextColor3 = Color3.fromRGB(0, 162, 255)
@@ -656,9 +728,11 @@ local function CreateTab(name, icon)
     end
 
     local Builder = {}
+
+    -- TOGGLE BUILDER
     function Builder:AddToggle(text, key)
         local frame = Instance.new("Frame")
-        frame.Size = UDim2.new(1, 0, 0, 36)
+        frame.Size = UDim2.new(1, -10, 0, 36)
         frame.BackgroundColor3 = Color3.fromRGB(20, 24, 34)
         frame.Parent = tabFrame
 
@@ -679,8 +753,8 @@ local function CreateTab(name, icon)
 
         local tBtn = Instance.new("TextButton")
         tBtn.Text = ""
-        tBtn.Size = UDim2.new(0, 40, 0, 20)
-        tBtn.Position = UDim2.new(1, -52, 0.5, -10)
+        tBtn.Size = UDim2.new(0, 42, 0, 22)
+        tBtn.Position = UDim2.new(1, -54, 0.5, -11)
         tBtn.BackgroundColor3 = Flags[key] and Color3.fromRGB(0, 162, 255) or Color3.fromRGB(16, 19, 27)
         tBtn.Parent = frame
 
@@ -690,7 +764,7 @@ local function CreateTab(name, icon)
 
         local knob = Instance.new("Frame")
         knob.Size = UDim2.new(0, 16, 0, 16)
-        knob.Position = Flags[key] and UDim2.new(1, -18, 0.5, -8) or UDim2.new(0, 2, 0.5, -8)
+        knob.Position = Flags[key] and UDim2.new(1, -19, 0.5, -8) or UDim2.new(0, 3, 0.5, -8)
         knob.BackgroundColor3 = Color3.fromRGB(240, 240, 245)
         knob.Parent = tBtn
 
@@ -701,13 +775,14 @@ local function CreateTab(name, icon)
         tBtn.MouseButton1Click:Connect(function()
             Flags[key] = not Flags[key]
             tBtn.BackgroundColor3 = Flags[key] and Color3.fromRGB(0, 162, 255) or Color3.fromRGB(16, 19, 27)
-            knob.Position = Flags[key] and UDim2.new(1, -18, 0.5, -8) or UDim2.new(0, 2, 0.5, -8)
+            knob.Position = Flags[key] and UDim2.new(1, -19, 0.5, -8) or UDim2.new(0, 3, 0.5, -8)
         end)
     end
 
+    -- BULLETPROOF SLIDER BUILDER (With Drag & Buttons +/-)
     function Builder:AddSlider(text, key, min, max)
         local frame = Instance.new("Frame")
-        frame.Size = UDim2.new(1, 0, 0, 48)
+        frame.Size = UDim2.new(1, -10, 0, 52)
         frame.BackgroundColor3 = Color3.fromRGB(20, 24, 34)
         frame.Parent = tabFrame
 
@@ -717,7 +792,7 @@ local function CreateTab(name, icon)
 
         local label = Instance.new("TextLabel")
         label.Text = text
-        label.Size = UDim2.new(0.6, 0, 0, 20)
+        label.Size = UDim2.new(0.5, 0, 0, 20)
         label.Position = UDim2.new(0, 12, 0, 6)
         label.BackgroundTransparency = 1
         label.TextColor3 = Color3.fromRGB(240, 240, 245)
@@ -728,8 +803,8 @@ local function CreateTab(name, icon)
 
         local valLabel = Instance.new("TextLabel")
         valLabel.Text = tostring(Flags[key])
-        valLabel.Size = UDim2.new(0.3, 0, 0, 20)
-        valLabel.Position = UDim2.new(0.7, -12, 0, 6)
+        valLabel.Size = UDim2.new(0.2, 0, 0, 20)
+        valLabel.Position = UDim2.new(0.5, 0, 0, 6)
         valLabel.BackgroundTransparency = 1
         valLabel.TextColor3 = Color3.fromRGB(0, 162, 255)
         valLabel.Font = Enum.Font.GothamBold
@@ -737,41 +812,108 @@ local function CreateTab(name, icon)
         valLabel.TextXAlignment = Enum.TextXAlignment.Right
         valLabel.Parent = frame
 
-        local track = Instance.new("Frame")
-        track.Size = UDim2.new(1, -24, 0, 6)
-        track.Position = UDim2.new(0, 12, 0, 32)
-        track.BackgroundColor3 = Color3.fromRGB(16, 19, 27)
-        track.Parent = frame
+        -- Minus Button
+        local MinusBtn = Instance.new("TextButton")
+        MinusBtn.Text = "-"
+        MinusBtn.Size = UDim2.new(0, 22, 0, 22)
+        MinusBtn.Position = UDim2.new(1, -54, 0, 5)
+        MinusBtn.BackgroundColor3 = Color3.fromRGB(16, 19, 27)
+        MinusBtn.TextColor3 = Color3.fromRGB(240, 240, 245)
+        MinusBtn.Font = Enum.Font.GothamBold
+        MinusBtn.TextSize = 14
+        MinusBtn.Parent = frame
+
+        local mCorner = Instance.new("UICorner")
+        mCorner.CornerRadius = UDim.new(0, 4)
+        mCorner.Parent = MinusBtn
+
+        -- Plus Button
+        local PlusBtn = Instance.new("TextButton")
+        PlusBtn.Text = "+"
+        PlusBtn.Size = UDim2.new(0, 22, 0, 22)
+        PlusBtn.Position = UDim2.new(1, -28, 0, 5)
+        PlusBtn.BackgroundColor3 = Color3.fromRGB(16, 19, 27)
+        PlusBtn.TextColor3 = Color3.fromRGB(240, 240, 245)
+        PlusBtn.Font = Enum.Font.GothamBold
+        PlusBtn.TextSize = 14
+        PlusBtn.Parent = frame
+
+        local pCorner = Instance.new("UICorner")
+        pCorner.CornerRadius = UDim.new(0, 4)
+        pCorner.Parent = PlusBtn
+
+        -- Slider Track & Interactor Button
+        local TrackBtn = Instance.new("TextButton")
+        TrackBtn.Text = ""
+        TrackBtn.Size = UDim2.new(1, -24, 0, 10)
+        TrackBtn.Position = UDim2.new(0, 12, 0, 34)
+        TrackBtn.BackgroundColor3 = Color3.fromRGB(16, 19, 27)
+        TrackBtn.Parent = frame
 
         local trCorner = Instance.new("UICorner")
         trCorner.CornerRadius = UDim.new(1, 0)
-        trCorner.Parent = track
+        trCorner.Parent = TrackBtn
 
+        local fillPct = math.clamp((Flags[key] - min) / (max - min), 0, 1)
         local fill = Instance.new("Frame")
-        fill.Size = UDim2.new((Flags[key] - min) / (max - min), 0, 1, 0)
+        fill.Size = UDim2.new(fillPct, 0, 1, 0)
         fill.BackgroundColor3 = Color3.fromRGB(0, 162, 255)
-        fill.Parent = track
+        fill.Parent = TrackBtn
 
         local fCorner = Instance.new("UICorner")
         fCorner.CornerRadius = UDim.new(1, 0)
         fCorner.Parent = fill
 
-        local sliding = false
-        local function update(input)
-            local pos = math.clamp((input.Position.X - track.AbsolutePosition.X) / track.AbsoluteSize.X, 0, 1)
-            local val = math.floor(min + (max - min) * pos)
-            Flags[key] = val
-            valLabel.Text = tostring(val)
-            fill.Size = UDim2.new(pos, 0, 1, 0)
+        local function UpdateValue(newVal)
+            newVal = math.clamp(math.floor(newVal), min, max)
+            Flags[key] = newVal
+            valLabel.Text = tostring(newVal)
+            local pct = (newVal - min) / (max - min)
+            fill.Size = UDim2.new(pct, 0, 1, 0)
         end
-        track.InputBegan:Connect(function(i) if i.UserInputType == Enum.UserInputType.MouseButton1 then sliding = true; update(i) end end)
-        UserInputService.InputChanged:Connect(function(i) if sliding and i.UserInputType == Enum.UserInputType.MouseMovement then update(i) end end)
-        UserInputService.InputEnded:Connect(function(i) if i.UserInputType == Enum.UserInputType.MouseButton1 then sliding = false end end)
+
+        MinusBtn.MouseButton1Click:Connect(function()
+            UpdateValue(Flags[key] - 1)
+        end)
+
+        PlusBtn.MouseButton1Click:Connect(function()
+            UpdateValue(Flags[key] + 1)
+        end)
+
+        local isSliding = false
+        local function UpdateFromMouse()
+            local mouseX = UserInputService:GetMouseLocation().X
+            local trackX = TrackBtn.AbsolutePosition.X
+            local trackWidth = TrackBtn.AbsoluteSize.X
+            if trackWidth > 0 then
+                local posPct = math.clamp((mouseX - trackX) / trackWidth, 0, 1)
+                local calcVal = min + (max - min) * posPct
+                UpdateValue(calcVal)
+            end
+        end
+
+        TrackBtn.MouseButton1Down:Connect(function()
+            isSliding = true
+            UpdateFromMouse()
+        end)
+
+        UserInputService.InputChanged:Connect(function(input)
+            if isSliding and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+                UpdateFromMouse()
+            end
+        end)
+
+        UserInputService.InputEnded:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                isSliding = false
+            end
+        end)
     end
 
+    -- DROPDOWN BUILDER
     function Builder:AddDropdown(text, key, options)
         local frame = Instance.new("Frame")
-        frame.Size = UDim2.new(1, 0, 0, 38)
+        frame.Size = UDim2.new(1, -10, 0, 38)
         frame.BackgroundColor3 = Color3.fromRGB(20, 24, 34)
         frame.Parent = tabFrame
 
@@ -813,9 +955,10 @@ local function CreateTab(name, icon)
         end)
     end
 
+    -- BUTTON BUILDER
     function Builder:AddButton(text, callback)
         local btnFrame = Instance.new("TextButton")
-        btnFrame.Size = UDim2.new(1, 0, 0, 36)
+        btnFrame.Size = UDim2.new(1, -10, 0, 36)
         btnFrame.BackgroundColor3 = Color3.fromRGB(0, 162, 255)
         btnFrame.Text = text
         btnFrame.TextColor3 = Color3.fromRGB(240, 240, 245)
@@ -842,7 +985,7 @@ Rage:AddToggle("Silent Aim", "SilentAim")
 Rage:AddDropdown("Target Hitbox", "AimTarget", {"Head", "UpperTorso", "HumanoidRootPart"})
 Rage:AddDropdown("Target Priority", "AimPriority", {"Crosshair", "Distance", "LowestHP"})
 Rage:AddToggle("Velocity Prediction", "Prediction")
-Rage:AddSlider("Prediction Factor", "PredictionFactor", 0.05, 0.3)
+Rage:AddSlider("Prediction Factor", "PredictionFactor", 0, 1)
 Rage:AddToggle("Show FOV Circle", "ShowFOV")
 Rage:AddSlider("FOV Radius", "FOVRadius", 30, 600)
 Rage:AddToggle("Wall Check", "WallCheck")
@@ -898,7 +1041,8 @@ end)
 UserInputService.InputBegan:Connect(function(input, gpe)
     if not gpe and input.KeyCode == Flags.MenuKey then
         MainFrame.Visible = not MainFrame.Visible
+        OpenBtn.Visible = not MainFrame.Visible
     end
 end)
 
-print("[OcelHub] SNIPER DUELS HvH Script Loaded! Press [RightShift] to toggle menu.")
+print("[OcelHub] Fixed UI Loaded! Press [RightShift] or click Open Button to toggle.")
