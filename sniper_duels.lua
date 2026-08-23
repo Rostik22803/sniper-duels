@@ -1,6 +1,6 @@
 --[[
     ====================================================================
-    OCEL HUB - SNIPER DUELS [HvH Client] (FIXED UI & DRAG & SLIDERS)
+    OCEL HUB - SNIPER DUELS [HvH Client] (SKELETON ESP & FIXED FOV)
     ====================================================================
     Game: SNIPER DUELS (https://www.roblox.com/games/109397169461300/SNIPER-DUELS)
     Toggle Menu Key: [RightShift]
@@ -32,6 +32,7 @@ local Flags = {
     AimPriority = "Crosshair",
     FOVRadius = 180,
     ShowFOV = true,
+    FOVPosition = "Center", -- "Center" or "Mouse"
     FOVColor = Color3.fromRGB(0, 162, 255),
     Prediction = true,
     PredictionFactor = 0.135,
@@ -56,6 +57,8 @@ local Flags = {
     DistanceESP = false,
     Tracers = false,
     TracerColor = Color3.fromRGB(255, 0, 100),
+    SkeletonESP = false,
+    SkeletonColor = Color3.fromRGB(255, 255, 255),
     ChamsEnabled = false,
     ChamsFillColor = Color3.fromRGB(0, 162, 255),
     ChamsOutlineColor = Color3.fromRGB(255, 255, 255),
@@ -180,8 +183,17 @@ local function IsVisible(origin, targetPart, ignoreChar)
     return not res or res.Instance:IsDescendantOf(ignoreChar)
 end
 
+local function GetFOVCenterPos()
+    if Flags.FOVPosition == "Center" then
+        local vp = Camera.ViewportSize
+        return Vector2.new(vp.X / 2, vp.Y / 2)
+    else
+        return UserInputService:GetMouseLocation()
+    end
+end
+
 local function GetBestTarget()
-    local mousePos = UserInputService:GetMouseLocation()
+    local fovPos = GetFOVCenterPos()
     local bestTarget, bestPart = nil, nil
     local minScore = math.huge
 
@@ -197,10 +209,10 @@ local function GetBestTarget()
                 end
                 local screenPos, onScreen = Camera:WorldToViewportPoint(worldPos)
                 if onScreen then
-                    local distToMouse = (Vector2.new(screenPos.X, screenPos.Y) - mousePos).Magnitude
-                    if distToMouse <= Flags.FOVRadius then
+                    local distToFOV = (Vector2.new(screenPos.X, screenPos.Y) - fovPos).Magnitude
+                    if distToFOV <= Flags.FOVRadius then
                         if IsVisible(Camera.CFrame.Position, targetPart, char) then
-                            local score = (Flags.AimPriority == "Crosshair" and distToMouse) or (Flags.AimPriority == "Distance" and (worldPos - Camera.CFrame.Position).Magnitude) or 0
+                            local score = (Flags.AimPriority == "Crosshair" and distToFOV) or (Flags.AimPriority == "Distance" and (worldPos - Camera.CFrame.Position).Magnitude) or 0
                             if score < minScore then
                                 minScore = score
                                 bestTarget = player
@@ -218,8 +230,9 @@ end
 
 RunService.RenderStepped:Connect(function()
     if FOVCircle then
-        FOVCircle.Position = UserInputService:GetMouseLocation()
+        FOVCircle.Position = GetFOVCenterPos()
         FOVCircle.Radius = Flags.FOVRadius
+        FOVCircle.Color = Flags.FOVColor
         FOVCircle.Visible = Flags.RageEnabled and Flags.ShowFOV
     end
     if Flags.RageEnabled then
@@ -315,9 +328,35 @@ RunService.Heartbeat:Connect(function(dt)
     end
 end)
 
--- VISUALS MODULE (ESP & CHAMS)
+-- VISUALS MODULE (2D BOX, HEALTHBAR, SKELETON, CHAMS)
 local ESPObjects = {}
 local ChamsObjects = {}
+
+-- Joint pairs for R15 and R6 character rigs
+local R15Joints = {
+    {"Head", "UpperTorso"},
+    {"UpperTorso", "LowerTorso"},
+    {"UpperTorso", "LeftUpperArm"},
+    {"LeftUpperArm", "LeftLowerArm"},
+    {"LeftLowerArm", "LeftHand"},
+    {"UpperTorso", "RightUpperArm"},
+    {"RightUpperArm", "RightLowerArm"},
+    {"RightLowerArm", "RightHand"},
+    {"LowerTorso", "LeftUpperLeg"},
+    {"LeftUpperLeg", "LeftLowerLeg"},
+    {"LeftLowerLeg", "LeftFoot"},
+    {"LowerTorso", "RightUpperLeg"},
+    {"RightUpperLeg", "RightLowerLeg"},
+    {"RightLowerLeg", "RightFoot"}
+}
+
+local R6Joints = {
+    {"Head", "Torso"},
+    {"Torso", "Left Arm"},
+    {"Torso", "Right Arm"},
+    {"Torso", "Left Leg"},
+    {"Torso", "Right Leg"}
+}
 
 local function CreateESP(player)
     local esp = {
@@ -328,7 +367,8 @@ local function CreateESP(player)
         Name = Drawing.new("Text"),
         Distance = Drawing.new("Text"),
         Tracer = Drawing.new("Line"),
-        OffscreenArrow = Drawing.new("Triangle")
+        OffscreenArrow = Drawing.new("Triangle"),
+        Skeletons = {}
     }
 
     esp.BoxOutline.Thickness = 3
@@ -356,6 +396,15 @@ local function CreateESP(player)
     esp.OffscreenArrow.Filled = true
     esp.OffscreenArrow.Color = Flags.ArrowColor
 
+    -- Allocate 14 Drawing lines for Skeleton ESP
+    for i = 1, 14 do
+        local line = Drawing.new("Line")
+        line.Thickness = 1.5
+        line.Color = Flags.SkeletonColor
+        line.Visible = false
+        table.insert(esp.Skeletons, line)
+    end
+
     ESPObjects[player] = esp
     return esp
 end
@@ -380,6 +429,44 @@ local function UpdateChams(player, char)
     end
 end
 
+local function UpdateSkeleton(char, esp)
+    if not Flags.ESPEnabled or not Flags.SkeletonESP then
+        for _, line in ipairs(esp.Skeletons) do line.Visible = false end
+        return
+    end
+
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    local isR15 = hum and hum.RigType == Enum.HumanoidRigType.R15
+    local joints = isR15 and R15Joints or R6Joints
+
+    for i, pair in ipairs(joints) do
+        local line = esp.Skeletons[i]
+        if line then
+            local part1 = char:FindFirstChild(pair[1])
+            local part2 = char:FindFirstChild(pair[2])
+            if part1 and part2 then
+                local pos1, vis1 = Camera:WorldToViewportPoint(part1.Position)
+                local pos2, vis2 = Camera:WorldToViewportPoint(part2.Position)
+                if vis1 and vis2 then
+                    line.From = Vector2.new(pos1.X, pos1.Y)
+                    line.To = Vector2.new(pos2.X, pos2.Y)
+                    line.Color = Flags.SkeletonColor
+                    line.Visible = true
+                else
+                    line.Visible = false
+                end
+            else
+                line.Visible = false
+            end
+        end
+    end
+
+    -- Hide remaining lines not used by current rig
+    for i = #joints + 1, #esp.Skeletons do
+        esp.Skeletons[i].Visible = false
+    end
+end
+
 RunService.RenderStepped:Connect(function()
     local viewport = Camera.ViewportSize
     local tracerStart = Vector2.new(viewport.X / 2, viewport.Y)
@@ -394,6 +481,8 @@ RunService.RenderStepped:Connect(function()
                 local hum = GetHumanoid(player)
                 if root and head and hum then
                     UpdateChams(player, char)
+                    UpdateSkeleton(char, esp)
+
                     local rootPos, onScreen = Camera:WorldToViewportPoint(root.Position)
                     local headPos = Camera:WorldToViewportPoint(head.Position + Vector3.new(0, 0.5, 0))
                     local legPos = Camera:WorldToViewportPoint(root.Position - Vector3.new(0, 3, 0))
@@ -452,6 +541,7 @@ RunService.RenderStepped:Connect(function()
                 esp.Name.Visible = false
                 esp.Distance.Visible = false
                 esp.Tracer.Visible = false
+                for _, line in ipairs(esp.Skeletons) do line.Visible = false end
             end
         end
     end
@@ -779,7 +869,7 @@ local function CreateTab(name, icon)
         end)
     end
 
-    -- BULLETPROOF SLIDER BUILDER (With Drag & Buttons +/-)
+    -- BULLETPROOF SLIDER BUILDER
     function Builder:AddSlider(text, key, min, max)
         local frame = Instance.new("Frame")
         frame.Size = UDim2.new(1, -10, 0, 52)
@@ -987,6 +1077,7 @@ Rage:AddDropdown("Target Priority", "AimPriority", {"Crosshair", "Distance", "Lo
 Rage:AddToggle("Velocity Prediction", "Prediction")
 Rage:AddSlider("Prediction Factor", "PredictionFactor", 0, 1)
 Rage:AddToggle("Show FOV Circle", "ShowFOV")
+Rage:AddDropdown("FOV Align Position", "FOVPosition", {"Center", "Mouse"})
 Rage:AddSlider("FOV Radius", "FOVRadius", 30, 600)
 Rage:AddToggle("Wall Check", "WallCheck")
 Rage:AddToggle("Team Check", "TeamCheck")
@@ -1006,6 +1097,7 @@ Vis:AddToggle("Dynamic Health Bar", "HealthBar")
 Vis:AddToggle("Player Names", "NameESP")
 Vis:AddToggle("Distance Text", "DistanceESP")
 Vis:AddToggle("Tracers", "Tracers")
+Vis:AddToggle("Skeleton ESP (Bone Lines)", "SkeletonESP")
 Vis:AddToggle("Chams (Glow Highlights)", "ChamsEnabled")
 Vis:AddToggle("Offscreen Arrows", "OffscreenArrows")
 
@@ -1045,4 +1137,4 @@ UserInputService.InputBegan:Connect(function(input, gpe)
     end
 end)
 
-print("[OcelHub] Fixed UI Loaded! Press [RightShift] or click Open Button to toggle.")
+print("[OcelHub] Skeleton ESP & Fixed FOV Position Loaded!")
