@@ -1,7 +1,7 @@
 --[[
     OCEL HUB - Sniper Duels
     100% Local Custom UI Framework (No External Loadstring)
-    Fixed Enum.Font crash and improved JSON robustness
+    Ultimate stability update: all executor-dependent functions wrapped in pcall.
 --]]
 
 -- Safety check: prevent duplicate run
@@ -100,40 +100,45 @@ local function saveConfig()
 end
 
 local function loadConfig()
-    if readfile and isfile and isfile(CONFIG_FILE) then
-        local success, data = pcall(function()
-            return HttpService:JSONDecode(readfile(CONFIG_FILE))
-        end)
-        if success and type(data) == "table" then
-            for k, v in pairs(data) do
-                Config[k] = v
+    pcall(function()
+        if readfile and isfile and isfile(CONFIG_FILE) then
+            local data = HttpService:JSONDecode(readfile(CONFIG_FILE))
+            if type(data) == "table" then
+                for k, v in pairs(data) do
+                    Config[k] = v
+                end
             end
         end
-    end
+    end)
 end
 
--- Load config on startup if exists
+-- Load config on startup
 loadConfig()
 
 -- ESP & Visual Handlers
 local ESP_Objects = {}
 local Skeletons = {}
 
--- Drawing FOV Circle
-local FOVCircle = Drawing.new("Circle")
-FOVCircle.Thickness = 1.5
-FOVCircle.NumSides = 60
-FOVCircle.Radius = Config.FOVRadius
-FOVCircle.Filled = false
-FOVCircle.Visible = false
-FOVCircle.Color = toColor3(Config.FOVColor)
+-- Drawing FOV Circle (Safe)
+local FOVCircle = nil
+pcall(function()
+    FOVCircle = Drawing.new("Circle")
+    FOVCircle.Thickness = 1.5
+    FOVCircle.NumSides = 60
+    FOVCircle.Radius = Config.FOVRadius
+    FOVCircle.Filled = false
+    FOVCircle.Visible = false
+    FOVCircle.Color = toColor3(Config.FOVColor)
+end)
 
 -- Update FOV pos
 RunService.RenderStepped:Connect(function()
-    FOVCircle.Radius = Config.FOVRadius
-    FOVCircle.Color = toColor3(Config.FOVColor)
-    FOVCircle.Visible = Config.ShowFOV
-    FOVCircle.Position = UserInputService:GetMouseLocation()
+    if FOVCircle then
+        FOVCircle.Radius = Config.FOVRadius
+        FOVCircle.Color = toColor3(Config.FOVColor)
+        FOVCircle.Visible = Config.ShowFOV
+        FOVCircle.Position = UserInputService:GetMouseLocation()
+    end
 end)
 
 -- Helper: Wall Check
@@ -201,23 +206,25 @@ RunService.RenderStepped:Connect(function()
     end
 end)
 
--- Silent Aim
-local mt = getrawmetatable(game)
-local oldIndex = mt.__index
-setreadonly(mt, false)
-mt.__index = newcclosure(function(self, key)
-    if not checkcaller() and Config.SilentAim and self == Mouse and (key == "Hit" or key == "Target") then
-        local target = getClosestPlayer()
-        if target and target:FindFirstChild(Config.HitPart) then
-            if key == "Hit" then return target[Config.HitPart].CFrame
-            elseif key == "Target" then return target[Config.HitPart] end
+-- Silent Aim (Safe Metatable Hook)
+pcall(function()
+    local mt = getrawmetatable(game)
+    local oldIndex = mt.__index
+    setreadonly(mt, false)
+    mt.__index = newcclosure(function(self, key)
+        if not checkcaller() and Config.SilentAim and self == Mouse and (key == "Hit" or key == "Target") then
+            local target = getClosestPlayer()
+            if target and target:FindFirstChild(Config.HitPart) then
+                if key == "Hit" then return target[Config.HitPart].CFrame
+                elseif key == "Target" then return target[Config.HitPart] end
+            end
         end
-    end
-    return oldIndex(self, key)
+        return oldIndex(self, key)
+    end)
+    setreadonly(mt, true)
 end)
-setreadonly(mt, true)
 
--- Triggerbot
+-- Triggerbot (Safe Mouse Click)
 task.spawn(function()
     while task.wait(0.05) do
         if Config.Triggerbot then
@@ -234,7 +241,7 @@ task.spawn(function()
                     elseif targetPlayer and targetPlayer ~= LocalPlayer then
                         if not Config.TeamCheck or targetPlayer.Team ~= LocalPlayer.Team then shouldShoot = true end
                     end
-                    if shouldShoot then mouse1click() end
+                    if shouldShoot and mouse1click then mouse1click() end
                 end
             end
         end
@@ -350,18 +357,22 @@ local function applyESP(character, isPlayer, playerObj)
     ESP_Objects[character] = highlight
 end
 
--- Skeleton ESP
+-- Skeleton ESP (Safe)
 local function createLine()
-    local line = Drawing.new("Line")
-    line.Thickness = 1.5
-    line.Color = toColor3(Config.SkeletonColor)
-    line.Transparency = 1
-    line.Visible = false
+    local line = nil
+    pcall(function()
+        line = Drawing.new("Line")
+        line.Thickness = 1.5
+        line.Color = toColor3(Config.SkeletonColor)
+        line.Transparency = 1
+        line.Visible = false
+    end)
     return line
 end
 
 local function drawSkeleton(character)
     if Skeletons[character] then return end
+    
     local lines = {
         HeadToTorso = createLine(),
         TorsoToLeftArm = createLine(),
@@ -369,14 +380,18 @@ local function drawSkeleton(character)
         TorsoToLeftLeg = createLine(),
         TorsoToRightLeg = createLine()
     }
+    
+    -- Check if lines were actually created
+    if not lines.HeadToTorso then return end
+    
     Skeletons[character] = lines
     
     local connection
     connection = RunService.RenderStepped:Connect(function()
         if not character or not character.Parent or not Config.SkeletonESP then
-            for _, l in pairs(lines) do l.Visible = false end
+            for _, l in pairs(lines) do if l then l.Visible = false end end
             if not Config.SkeletonESP and (not character or not character.Parent) then
-                for _, l in pairs(lines) do l:Remove() end
+                for _, l in pairs(lines) do if l then l:Remove() end end
                 Skeletons[character] = nil
                 connection:Disconnect()
             end
@@ -393,6 +408,7 @@ local function drawSkeleton(character)
         
         if head and torso and leftArm and rightArm and leftLeg and rightLeg then
             local function setLine(line, part1, part2)
+                if not line then return end
                 local p1, onScreen1 = Camera:WorldToViewportPoint(part1.Position)
                 local p2, onScreen2 = Camera:WorldToViewportPoint(part2.Position)
                 if onScreen1 and onScreen2 then
@@ -410,7 +426,7 @@ local function drawSkeleton(character)
             setLine(lines.TorsoToLeftLeg, torso, leftLeg)
             setLine(lines.TorsoToRightLeg, torso, rightLeg)
         else
-            for _, l in pairs(lines) do l.Visible = false end
+            for _, l in pairs(lines) do if l then l.Visible = false end end
         end
     end)
 end
@@ -444,20 +460,22 @@ end)
 task.spawn(function()
     while task.wait(0.5) do
         if Config.NoRecoil or Config.NoSpread then
-            for _, v in pairs(getgc(true)) do
-                if type(v) == "table" then
-                    if Config.NoRecoil then
-                        if rawget(v, "Recoil") or rawget(v, "recoil") or rawget(v, "RecoilPower") then
-                            v.Recoil = 0; v.recoil = 0; v.RecoilPower = 0; v.MaxRecoil = 0; v.MinRecoil = 0
+            pcall(function()
+                for _, v in pairs(getgc(true)) do
+                    if type(v) == "table" then
+                        if Config.NoRecoil then
+                            if rawget(v, "Recoil") or rawget(v, "recoil") or rawget(v, "RecoilPower") then
+                                v.Recoil = 0; v.recoil = 0; v.RecoilPower = 0; v.MaxRecoil = 0; v.MinRecoil = 0
+                            end
                         end
-                    end
-                    if Config.NoSpread then
-                        if rawget(v, "Spread") or rawget(v, "spread") or rawget(v, "Accuracy") then
-                            v.Spread = 0; v.spread = 0; v.Accuracy = 100; v.MinSpread = 0; v.MaxSpread = 0
+                        if Config.NoSpread then
+                            if rawget(v, "Spread") or rawget(v, "spread") or rawget(v, "Accuracy") then
+                                v.Spread = 0; v.spread = 0; v.Accuracy = 100; v.MinSpread = 0; v.MaxSpread = 0
+                            end
                         end
                     end
                 end
-            end
+            end)
         end
     end
 end)
@@ -608,9 +626,9 @@ CloseCorner.Parent = CloseButton
 
 CloseButton.MouseButton1Click:Connect(function()
     OcelHub:Destroy()
-    FOVCircle:Remove()
+    if FOVCircle then FOVCircle:Remove() end
     for _, h in pairs(ESP_Objects) do h:Destroy() end
-    for _, l in pairs(Skeletons) do for _, line in pairs(l) do line:Remove() end end
+    for _, l in pairs(Skeletons) do for _, line in pairs(l) do if line then line:Remove() end end end
     _G.OcelHubLoaded = nil
 end)
 
