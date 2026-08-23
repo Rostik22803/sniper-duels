@@ -9,11 +9,19 @@ if _G.OcelHubLoaded then
     local oldGui = game:GetService("CoreGui"):FindFirstChild("OcelHub") or game:GetService("Players").LocalPlayer:FindFirstChild("OcelHub")
     if oldGui then oldGui:Destroy() end
     if _G.ESP_Connections then
-        for _, conn in pairs(_G.ESP_Connections) do conn:Disconnect() end
+        for _, conn in pairs(_G.ESP_Connections) do pcall(function() conn:Disconnect() end) end
+    end
+    if _G.ESP_Drawings then
+        for _, draw in pairs(_G.ESP_Drawings) do pcall(function() draw:Remove() end) end
+    end
+    if _G.ESP_Highlights then
+        for _, hl in pairs(_G.ESP_Highlights) do pcall(function() hl:Destroy() end) end
     end
 end
 _G.OcelHubLoaded = true
 _G.ESP_Connections = {}
+_G.ESP_Drawings = {}
+_G.ESP_Highlights = {}
 
 -- Services
 local Players = game:GetService("Players")
@@ -56,10 +64,11 @@ local Config = {
     BoxESP = false,
     HealthESP = false,
     NameESP = false,
-    EnemyESP = false,
-    EnemyColor = {255, 0, 0},
+    ChamsESP = true,
+    EnemyESP = true,
+    EnemyColor = {255, 50, 50},
     TeamESP = false,
-    TeamColor = {0, 255, 0},
+    TeamColor = {50, 255, 50},
     DummyESP = false,
     DummyColor = {255, 255, 255},
     SkeletonESP = false,
@@ -130,22 +139,35 @@ end
 loadConfig("default")
 
 -- Visuals Storage & Tracking
-local ESP_BillboardGuis = {}
-local Highlights = {}
-local Skeletons = {}
+local ESP_Entries = {}
 local OriginalViewmodelProps = {}
 
+-- Helper to safely create Drawing objects
+local function newDrawing(drawType, props)
+    local obj = nil
+    pcall(function()
+        obj = Drawing.new(drawType)
+        if props then
+            for k, v in pairs(props) do
+                obj[k] = v
+            end
+        end
+    end)
+    if obj then
+        table.insert(_G.ESP_Drawings, obj)
+    end
+    return obj
+end
+
 -- Drawing FOV Circle
-local FOVCircle = nil
-pcall(function()
-    FOVCircle = Drawing.new("Circle")
-    FOVCircle.Thickness = 1.5
-    FOVCircle.NumSides = 60
-    FOVCircle.Radius = Config.FOVRadius
-    FOVCircle.Filled = false
-    FOVCircle.Visible = false
-    FOVCircle.Color = toColor3(Config.FOVColor)
-end)
+local FOVCircle = newDrawing("Circle", {
+    Thickness = 1.5,
+    NumSides = 60,
+    Radius = Config.FOVRadius,
+    Filled = false,
+    Visible = false,
+    Color = toColor3(Config.FOVColor)
+})
 
 -- Update FOV pos to center of screen
 RunService.RenderStepped:Connect(function()
@@ -186,14 +208,14 @@ local function getClosestPlayer()
         if char.Humanoid.Health <= 0 then return end
         
         -- Fix: Check team only if team is not nil, to avoid ignoring Neutral/No-team players
-        if isPlayer and Config.TeamCheck and playerObj.Team ~= nil and playerObj.Team == LocalPlayer.Team then 
+        if isPlayer and Config.TeamCheck and playerObj and playerObj.Team ~= nil and LocalPlayer.Team ~= nil and playerObj.Team == LocalPlayer.Team then 
             return 
         end
         
         local hitPart = char[Config.HitPart]
         local screenPos, onScreen = Camera:WorldToViewportPoint(hitPart.Position)
         
-        if onScreen then
+        if onScreen and screenPos.Z > 0 then
             local screenPos2D = Vector2.new(screenPos.X, screenPos.Y)
             local mouseDistance = (screenPos2D - center).Magnitude
             
@@ -235,9 +257,7 @@ end)
 pcall(function()
     local mt = getrawmetatable(game)
     local oldIndex = mt.__index
-    local oldNamecall = mt.__namecall
     setreadonly(mt, false)
-    
     mt.__index = newcclosure(function(self, key)
         if not checkcaller() and Config.SilentAim and self == Mouse and (key == "Hit" or key == "Target") then
             local target = getClosestPlayer()
@@ -248,67 +268,8 @@ pcall(function()
         end
         return oldIndex(self, key)
     end)
-    
-    mt.__namecall = newcclosure(function(self, ...)
-        local method = getnamecallmethod()
-        local args = {...}
-        if not checkcaller() and Config.SilentAim and self == Workspace then
-            if method == "Raycast" then
-                local origin = args[1]
-                local target = getClosestPlayer()
-                if target and target:FindFirstChild(Config.HitPart) then
-                    local hitPart = target[Config.HitPart]
-                    args[2] = (hitPart.Position - origin).Unit * 1000
-                    return oldNamecall(self, unpack(args))
-                end
-            elseif method == "FindPartOnRay" or method == "FindPartOnRayWithIgnoreList" or method == "FindPartOnRayWithWhiteList" then
-                local ray = args[1]
-                local origin = ray.Origin
-                local target = getClosestPlayer()
-                if target and target:FindFirstChild(Config.HitPart) then
-                    local hitPart = target[Config.HitPart]
-                    args[1] = Ray.new(origin, (hitPart.Position - origin).Unit * 1000)
-                    return oldNamecall(self, unpack(args))
-                end
-            end
-        end
-        return oldNamecall(self, ...)
-    end)
-    
     setreadonly(mt, true)
 end)
-
--- hookmetamethod backup for newer executors
-if hookmetamethod then
-    pcall(function()
-        local oldNamecall
-        oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
-            local method = getnamecallmethod()
-            local args = {...}
-            if not checkcaller() and Config.SilentAim and self == Workspace then
-                if method == "Raycast" then
-                    local origin = args[1]
-                    local target = getClosestPlayer()
-                    if target and target:FindFirstChild(Config.HitPart) then
-                        local hitPart = target[Config.HitPart]
-                        args[2] = (hitPart.Position - origin).Unit * 1000
-                        return oldNamecall(self, unpack(args))
-                    end
-                elseif method == "FindPartOnRay" or method == "FindPartOnRayWithIgnoreList" or method == "FindPartOnRayWithWhiteList" then
-                    local ray = args[1]
-                    local origin = ray.Origin
-                    local target = getClosestPlayer()
-                    if target and target:FindFirstChild(Config.HitPart) then
-                        local hitPart = target[Config.HitPart]
-                        args[1] = Ray.new(origin, (hitPart.Position - origin).Unit * 1000)
-                        return oldNamecall(self, unpack(args))
-                    end
-                end
-            end
-            return oldNamecall(self, ...)
-        end)
-    end)
-end
 
 -- Triggerbot
 task.spawn(function()
@@ -325,7 +286,8 @@ task.spawn(function()
                     local shouldShoot = false
                     if isDummy then shouldShoot = true
                     elseif targetPlayer and targetPlayer ~= LocalPlayer then
-                        if not Config.TeamCheck or targetPlayer.Team == nil or targetPlayer.Team ~= LocalPlayer.Team then shouldShoot = true end
+                        local isTeam = targetPlayer.Team ~= nil and LocalPlayer.Team ~= nil and targetPlayer.Team == LocalPlayer.Team
+                        if not Config.TeamCheck or not isTeam then shouldShoot = true end
                     end
                     if shouldShoot and mouse1click then mouse1click() end
                 end
@@ -360,6 +322,7 @@ RunService.RenderStepped:Connect(function()
             SelfHighlight.Name = "SelfChams"
             SelfHighlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
             SelfHighlight.Parent = CoreGui
+            table.insert(_G.ESP_Highlights, SelfHighlight)
         end
         SelfHighlight.Adornee = LocalPlayer.Character
         SelfHighlight.FillColor = toColor3(Config.SelfColor)
@@ -427,235 +390,258 @@ task.spawn(function()
     end
 end)
 
--- Skeleton drawing helper
-local function createLine()
-    local line = nil
-    pcall(function()
-        line = Drawing.new("Line")
-        line.Thickness = 1.5
-        line.Color = toColor3(Config.SkeletonColor)
-        line.Transparency = 1
-        line.Visible = false
-    end)
-    return line
+-- ==================== HIGH PERFORMANCE UNIFIED ESP ====================
+local function cleanupESPEntry(entry)
+    if not entry then return end
+    if entry.Connection then
+        pcall(function() entry.Connection:Disconnect() end)
+    end
+    if entry.BoxOutline then pcall(function() entry.BoxOutline:Remove() end) end
+    if entry.Box then pcall(function() entry.Box:Remove() end) end
+    if entry.HealthBg then pcall(function() entry.HealthBg:Remove() end) end
+    if entry.HealthFill then pcall(function() entry.HealthFill:Remove() end) end
+    if entry.NameTag then pcall(function() entry.NameTag:Remove() end) end
+    if entry.Highlight then pcall(function() entry.Highlight:Destroy() end) end
+    if entry.SkeletonLines then
+        for _, line in pairs(entry.SkeletonLines) do
+            pcall(function() line:Remove() end)
+        end
+    end
 end
 
-local function drawSkeleton(character, isPlayer, playerObj)
-    if Skeletons[character] then return end
+local function createESP(character, isPlayer, playerObj)
+    if ESP_Entries[character] then return end
     
-    -- Create up to 15 lines to accommodate R15 joints
-    local lines = {}
-    for i = 1, 15 do
-        local l = createLine()
-        if l then table.insert(lines, l) end
+    local hrp = character:WaitForChild("HumanoidRootPart", 5) or character:WaitForChild("Torso", 5) or character:WaitForChild("UpperTorso", 5)
+    local hum = character:WaitForChild("Humanoid", 5)
+    if not hrp or not hum then return end
+    
+    local entry = {
+        Character = character,
+        HRP = hrp,
+        Humanoid = hum,
+        IsPlayer = isPlayer,
+        PlayerObj = playerObj,
+        BoxOutline = newDrawing("Square", { Thickness = 3, Filled = false, Color = Color3.fromRGB(0, 0, 0), Visible = false }),
+        Box = newDrawing("Square", { Thickness = 1.5, Filled = false, Color = Color3.fromRGB(255, 255, 255), Visible = false }),
+        HealthBg = newDrawing("Square", { Thickness = 1, Filled = true, Color = Color3.fromRGB(0, 0, 0), Visible = false }),
+        HealthFill = newDrawing("Square", { Thickness = 1, Filled = true, Color = Color3.fromRGB(0, 255, 0), Visible = false }),
+        NameTag = newDrawing("Text", { Size = 13, Center = true, Outline = true, Color = Color3.fromRGB(255, 255, 255), Visible = false }),
+        SkeletonLines = {}
+    }
+    
+    -- Pre-create 14 skeleton lines for max R15 joint fidelity
+    for i = 1, 14 do
+        local l = newDrawing("Line", { Thickness = 1.5, Color = toColor3(Config.SkeletonColor), Visible = false })
+        if l then table.insert(entry.SkeletonLines, l) end
     end
     
-    Skeletons[character] = lines
+    -- Highlight (Chams)
+    local highlight = Instance.new("Highlight")
+    highlight.Name = "OcelHighlight"
+    highlight.Adornee = character
+    highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    highlight.Parent = CoreGui
+    entry.Highlight = highlight
+    table.insert(_G.ESP_Highlights, highlight)
+    
+    local function hideDrawings()
+        if entry.BoxOutline then entry.BoxOutline.Visible = false end
+        if entry.Box then entry.Box.Visible = false end
+        if entry.HealthBg then entry.HealthBg.Visible = false end
+        if entry.HealthFill then entry.HealthFill.Visible = false end
+        if entry.NameTag then entry.NameTag.Visible = false end
+        if entry.SkeletonLines then
+            for _, line in pairs(entry.SkeletonLines) do
+                line.Visible = false
+            end
+        end
+    end
     
     local conn
     conn = RunService.RenderStepped:Connect(function()
-        if not character or not character.Parent or not Config.SkeletonESP then
-            for _, l in pairs(lines) do if l then l.Visible = false end end
-            if not Config.SkeletonESP and (not character or not character.Parent) then
-                for _, l in pairs(lines) do if l then l:Remove() end end
-                Skeletons[character] = nil
-                conn:Disconnect()
-            end
+        if not character or not character.Parent or not hrp or not hum or hum.Health <= 0 then
+            cleanupESPEntry(entry)
+            ESP_Entries[character] = nil
             return
         end
         
-        local isEnabled = false
-        if isPlayer then
-            if playerObj.Team ~= nil and playerObj.Team == LocalPlayer.Team then
-                isEnabled = Config.TeamESP
-            else
-                isEnabled = Config.EnemyESP
+        -- Team calculation (Safe check for FFA / no teams)
+        local isTeammate = false
+        if isPlayer and playerObj then
+            if playerObj.Team ~= nil and LocalPlayer.Team ~= nil and playerObj.Team == LocalPlayer.Team then
+                isTeammate = true
             end
-        else
-            isEnabled = Config.DummyESP
         end
         
-        if isEnabled then
-            local isR15 = character:FindFirstChild("UpperTorso") ~= nil
-            local connections = {}
+        local isTargetEnabled = false
+        local mainColor = toColor3(Config.EnemyColor)
+        
+        if isPlayer then
+            if isTeammate then
+                isTargetEnabled = Config.TeamESP
+                mainColor = toColor3(Config.TeamColor)
+            else
+                isTargetEnabled = Config.EnemyESP
+                mainColor = toColor3(Config.EnemyColor)
+            end
+        else
+            isTargetEnabled = Config.DummyESP
+            mainColor = toColor3(Config.DummyColor)
+        end
+        
+        -- Update Chams
+        if entry.Highlight then
+            if isTargetEnabled and Config.ChamsESP then
+                entry.Highlight.Enabled = true
+                entry.Highlight.FillColor = mainColor
+                entry.Highlight.OutlineColor = mainColor
+                entry.Highlight.FillOpacity = 0.5
+                entry.Highlight.OutlineOpacity = 0.8
+            else
+                entry.Highlight.Enabled = false
+            end
+        end
+        
+        if not isTargetEnabled then
+            hideDrawings()
+            return
+        end
+        
+        local head = character:FindFirstChild("Head")
+        local headWorldPos = head and (head.Position + Vector3.new(0, 0.6, 0)) or (hrp.Position + Vector3.new(0, 2.5, 0))
+        local legWorldPos = hrp.Position - Vector3.new(0, 3.2, 0)
+        
+        local topScreen, topVis = Camera:WorldToViewportPoint(headWorldPos)
+        local botScreen, botVis = Camera:WorldToViewportPoint(legWorldPos)
+        local rootScreen, rootVis = Camera:WorldToViewportPoint(hrp.Position)
+        
+        if (topVis or botVis or rootVis) and rootScreen.Z > 0 then
+            local height = math.abs(topScreen.Y - botScreen.Y)
+            if height < 6 then height = 6 end
+            local width = height * 0.6
+            local boxX = rootScreen.X - (width / 2)
+            local boxY = topScreen.Y
             
-            if isR15 then
-                connections = {
+            -- Box ESP
+            if Config.BoxESP then
+                if entry.BoxOutline then
+                    entry.BoxOutline.Position = Vector2.new(boxX - 1, boxY - 1)
+                    entry.BoxOutline.Size = Vector2.new(width + 2, height + 2)
+                    entry.BoxOutline.Visible = true
+                end
+                if entry.Box then
+                    entry.Box.Position = Vector2.new(boxX, boxY)
+                    entry.Box.Size = Vector2.new(width, height)
+                    entry.Box.Color = mainColor
+                    entry.Box.Visible = true
+                end
+            else
+                if entry.BoxOutline then entry.BoxOutline.Visible = false end
+                if entry.Box then entry.Box.Visible = false end
+            end
+            
+            -- Health Bar ESP
+            if Config.HealthESP then
+                local maxHp = math.max(hum.MaxHealth, 1)
+                local curHp = math.clamp(hum.Health, 0, maxHp)
+                local hpRatio = curHp / maxHp
+                
+                if entry.HealthBg then
+                    entry.HealthBg.Position = Vector2.new(boxX - 6, boxY - 1)
+                    entry.HealthBg.Size = Vector2.new(4, height + 2)
+                    entry.HealthBg.Visible = true
+                end
+                if entry.HealthFill then
+                    local fillHeight = math.floor(height * hpRatio)
+                    entry.HealthFill.Position = Vector2.new(boxX - 5, boxY + height - fillHeight)
+                    entry.HealthFill.Size = Vector2.new(2, fillHeight)
+                    entry.HealthFill.Color = Color3.fromRGB(math.floor(255 * (1 - hpRatio)), math.floor(255 * hpRatio), 0)
+                    entry.HealthFill.Visible = true
+                end
+            else
+                if entry.HealthBg then entry.HealthBg.Visible = false end
+                if entry.HealthFill then entry.HealthFill.Visible = false end
+            end
+            
+            -- Name & Distance ESP
+            if Config.NameESP then
+                if entry.NameTag then
+                    local dist = math.floor((Camera.CFrame.Position - hrp.Position).Magnitude)
+                    local displayName = isPlayer and (playerObj and playerObj.DisplayName or character.Name) or character.Name
+                    entry.NameTag.Text = displayName .. " [" .. dist .. "m]"
+                    entry.NameTag.Position = Vector2.new(rootScreen.X, boxY - 16)
+                    entry.NameTag.Color = mainColor
+                    entry.NameTag.Visible = true
+                end
+            else
+                if entry.NameTag then entry.NameTag.Visible = false end
+            end
+            
+            -- Full Body Skeleton ESP (R15 & R6)
+            if Config.SkeletonESP then
+                local isR15 = character:FindFirstChild("UpperTorso") ~= nil
+                local joints = isR15 and {
                     {"Head", "UpperTorso"},
                     {"UpperTorso", "LowerTorso"},
-                    -- Left Arm
                     {"UpperTorso", "LeftUpperArm"},
                     {"LeftUpperArm", "LeftLowerArm"},
                     {"LeftLowerArm", "LeftHand"},
-                    -- Right Arm
                     {"UpperTorso", "RightUpperArm"},
                     {"RightUpperArm", "RightLowerArm"},
                     {"RightLowerArm", "RightHand"},
-                    -- Left Leg
                     {"LowerTorso", "LeftUpperLeg"},
                     {"LeftUpperLeg", "LeftLowerLeg"},
                     {"LeftLowerLeg", "LeftFoot"},
-                    -- Right Leg
                     {"LowerTorso", "RightUpperLeg"},
                     {"RightUpperLeg", "RightLowerLeg"},
                     {"RightLowerLeg", "RightFoot"}
-                }
-            else
-                connections = {
+                } or {
                     {"Head", "Torso"},
                     {"Torso", "Left Arm"},
                     {"Torso", "Right Arm"},
                     {"Torso", "Left Leg"},
                     {"Torso", "Right Leg"}
                 }
-            end
-            
-            for i, connPair in ipairs(connections) do
-                local part1 = character:FindFirstChild(connPair[1])
-                local part2 = character:FindFirstChild(connPair[2])
-                local line = lines[i]
                 
-                if line and part1 and part2 then
-                    local p1, onScreen1 = Camera:WorldToViewportPoint(part1.Position)
-                    local p2, onScreen2 = Camera:WorldToViewportPoint(part2.Position)
-                    if onScreen1 and onScreen2 then
-                        line.From = Vector2.new(p1.X, p1.Y)
-                        line.To = Vector2.new(p2.X, p2.Y)
-                        line.Color = toColor3(Config.SkeletonColor)
-                        line.Visible = true
-                    else
-                        line.Visible = false
+                for i, pair in ipairs(joints) do
+                    local line = entry.SkeletonLines[i]
+                    if line then
+                        local p1 = character:FindFirstChild(pair[1])
+                        local p2 = character:FindFirstChild(pair[2])
+                        if p1 and p2 then
+                            local v1, on1 = Camera:WorldToViewportPoint(p1.Position)
+                            local v2, on2 = Camera:WorldToViewportPoint(p2.Position)
+                            if on1 and on2 and v1.Z > 0 and v2.Z > 0 then
+                                line.From = Vector2.new(v1.X, v1.Y)
+                                line.To = Vector2.new(v2.X, v2.Y)
+                                line.Color = toColor3(Config.SkeletonColor)
+                                line.Visible = true
+                            else
+                                line.Visible = false
+                            end
+                        else
+                            line.Visible = false
+                        end
                     end
-                elseif line then
+                end
+                
+                for i = #joints + 1, #entry.SkeletonLines do
+                    entry.SkeletonLines[i].Visible = false
+                end
+            else
+                for _, line in pairs(entry.SkeletonLines) do
                     line.Visible = false
                 end
             end
-            
-            -- Hide remaining unused lines
-            for i = #connections + 1, #lines do
-                if lines[i] then lines[i].Visible = false end
-            end
         else
-            for _, l in pairs(lines) do if l then l.Visible = false end end
+            hideDrawings()
         end
     end)
+    
+    entry.Connection = conn
     table.insert(_G.ESP_Connections, conn)
-end
-
--- 2D Billboard GUI ESP
-local function createESP(character, isPlayer, playerObj)
-    if ESP_BillboardGuis[character] then return end
-    
-    local hrp = character:WaitForChild("HumanoidRootPart", 10)
-    local hum = character:WaitForChild("Humanoid", 10)
-    if not hrp or not hum then return end
-    
-    local billboard = Instance.new("BillboardGui")
-    billboard.Name = "OcelESP"
-    billboard.Size = UDim2.new(4.5, 0, 6, 0)
-    billboard.AlwaysOnTop = true
-    billboard.Adornee = hrp
-    billboard.Parent = LocalPlayer:FindFirstChildOfClass("PlayerGui") or CoreGui
-    
-    -- Bounding Box Frame
-    local box = Instance.new("Frame")
-    box.Size = UDim2.new(1, 0, 1, 0)
-    box.BackgroundTransparency = 1
-    box.BorderColor3 = Color3.fromRGB(255, 255, 255)
-    box.BorderSizePixel = 1.5
-    box.Parent = billboard
-    
-    -- Health bar (Left side)
-    local healthBg = Instance.new("Frame")
-    healthBg.Size = UDim2.new(0, 4, 1, 0)
-    healthBg.Position = UDim2.new(0, -8, 0, 0)
-    healthBg.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
-    healthBg.BorderSizePixel = 0
-    healthBg.Parent = billboard
-    
-    local healthFill = Instance.new("Frame")
-    healthFill.Size = UDim2.new(1, 0, 1, 0)
-    healthFill.BackgroundColor3 = Color3.fromRGB(0, 255, 0)
-    healthFill.BorderSizePixel = 0
-    healthFill.Parent = healthBg
-    
-    -- Name and Distance Label
-    local nameLabel = Instance.new("TextLabel")
-    nameLabel.Size = UDim2.new(1, 40, 0, 15)
-    nameLabel.Position = UDim2.new(0, -20, 0, -18)
-    nameLabel.BackgroundTransparency = 1
-    nameLabel.Text = character.Name
-    nameLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-    nameLabel.TextStrokeTransparency = 0
-    nameLabel.Font = Enum.Font.SourceSansBold
-    nameLabel.TextSize = 13
-    nameLabel.Parent = billboard
-    
-    -- Highlight (Chams)
-    local highlight = Instance.new("Highlight")
-    highlight.Adornee = character
-    highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-    highlight.Parent = character
-    
-    local conn
-    conn = RunService.RenderStepped:Connect(function()
-        if not character or not character.Parent or not hrp or not hum or hum.Health <= 0 then
-            billboard:Destroy()
-            highlight:Destroy()
-            ESP_BillboardGuis[character] = nil
-            conn:Disconnect()
-            return
-        end
-        
-        local color = toColor3(Config.DummyColor)
-        local espEnabled = false
-        local chamsEnabled = false
-        
-        if isPlayer then
-            if playerObj.Team ~= nil and playerObj.Team == LocalPlayer.Team then
-                color = toColor3(Config.TeamColor)
-                espEnabled = Config.TeamESP
-                chamsEnabled = Config.TeamESP
-            else
-                color = toColor3(Config.EnemyColor)
-                espEnabled = Config.EnemyESP
-                chamsEnabled = Config.EnemyESP
-            end
-        else
-            color = toColor3(Config.DummyColor)
-            espEnabled = Config.DummyESP
-            chamsEnabled = Config.DummyESP
-        end
-        
-        -- Box
-        box.Visible = espEnabled and Config.BoxESP
-        box.BorderColor3 = color
-        
-        -- Health
-        healthBg.Visible = espEnabled and Config.HealthESP
-        healthFill.Size = UDim2.new(1, 0, hum.Health / math.max(hum.MaxHealth, 1), 0)
-        healthFill.BackgroundColor3 = Color3.fromRGB(255 * (1 - (hum.Health/hum.MaxHealth)), 255 * (hum.Health/hum.MaxHealth), 0)
-        
-        -- Name & Distance
-        nameLabel.Visible = espEnabled and Config.NameESP
-        local dist = math.floor((Camera.CFrame.Position - hrp.Position).Magnitude)
-        nameLabel.Text = character.Name .. " [" .. dist .. "m]"
-        nameLabel.TextColor3 = color
-        
-        -- Highlight/Chams
-        highlight.Enabled = chamsEnabled
-        highlight.FillColor = color
-        highlight.OutlineColor = color
-        highlight.FillOpacity = 0.5
-        highlight.OutlineOpacity = 0.8
-    end)
-    
-    table.insert(_G.ESP_Connections, conn)
-    ESP_BillboardGuis[character] = billboard
-    Highlights[character] = highlight
-    
-    -- Connect Skeletons
-    drawSkeleton(character, isPlayer, playerObj)
+    ESP_Entries[character] = entry
 end
 
 local function trackPlayer(player)
@@ -677,7 +663,7 @@ task.spawn(function()
                 createESP(obj, false, nil)
             end
         end
-        task.wait(4)
+        task.wait(3)
     end
 end)
 
@@ -834,7 +820,7 @@ TitleText.TextSize = 15
 TitleText.TextXAlignment = Enum.TextXAlignment.Left
 TitleText.Parent = TitleBar
 
--- Minimize Button (New: Collapses window)
+-- Minimize Button (Collapses window)
 local MinimizeButton = Instance.new("TextButton")
 MinimizeButton.Size = UDim2.new(0, 25, 0, 25)
 MinimizeButton.Position = UDim2.new(1, -65, 0.5, -12)
@@ -866,10 +852,11 @@ CloseCorner.Parent = CloseButton
 
 CloseButton.MouseButton1Click:Connect(function()
     OcelHub:Destroy()
-    if FOVCircle then FOVCircle:Remove() end
-    for _, h in pairs(ESP_BillboardGuis) do h:Destroy() end
-    for _, h in pairs(Highlights) do h:Destroy() end
-    for _, conn in pairs(_G.ESP_Connections) do conn:Disconnect() end
+    if FOVCircle then pcall(function() FOVCircle:Remove() end) end
+    for _, entry in pairs(ESP_Entries) do cleanupESPEntry(entry) end
+    for _, hl in pairs(_G.ESP_Highlights) do pcall(function() hl:Destroy() end) end
+    for _, conn in pairs(_G.ESP_Connections) do pcall(function() conn:Disconnect() end) end
+    for _, draw in pairs(_G.ESP_Drawings) do pcall(function() draw:Remove() end) end
     _G.OcelHubLoaded = nil
 end)
 
@@ -1052,16 +1039,17 @@ local function addToggle(parent, text, configKey, callback)
         Config[configKey] = not Config[configKey]
         btn.BackgroundColor3 = Config[configKey] and Color3.fromRGB(0, 170, 255) or Color3.fromRGB(45, 45, 60)
         dot:TweenPosition(Config[configKey] and UDim2.new(1, -18, 0.5, -8) or UDim2.new(0, 2, 0.5, -8), "Out", "Quad", 0.15, true)
-        callback(Config[configKey])
+        if callback then callback(Config[configKey]) end
         saveConfig()
     end)
 end
 
+-- Completely fixed and responsive Slider
 local function addSlider(parent, text, min, max, configKey, callback)
-    local container = createContainer(parent, 45)
+    local container = createContainer(parent, 50)
     
     local label = Instance.new("TextLabel")
-    label.Size = UDim2.new(0.7, 0, 0, 20)
+    label.Size = UDim2.new(0.65, 0, 0, 20)
     label.Position = UDim2.new(0.04, 0, 0, 4)
     label.BackgroundTransparency = 1
     label.Text = text
@@ -1072,67 +1060,80 @@ local function addSlider(parent, text, min, max, configKey, callback)
     label.Parent = container
     
     local valLabel = Instance.new("TextLabel")
-    valLabel.Size = UDim2.new(0.2, 0, 0, 20)
-    valLabel.Position = UDim2.new(0.76, 0, 0, 4)
+    valLabel.Size = UDim2.new(0.25, 0, 0, 20)
+    valLabel.Position = UDim2.new(0.71, 0, 0, 4)
     valLabel.BackgroundTransparency = 1
-    valLabel.Text = tostring(Config[configKey])
-    valLabel.TextColor3 = Color3.fromRGB(150, 150, 150)
-    valLabel.Font = Enum.Font.SourceSansSemibold
+    valLabel.Text = tostring(Config[configKey] or min)
+    valLabel.TextColor3 = Color3.fromRGB(0, 170, 255)
+    valLabel.Font = Enum.Font.SourceSansBold
     valLabel.TextSize = 14
     valLabel.TextXAlignment = Enum.TextXAlignment.Right
     valLabel.Parent = container
     
-    -- Invisible interactive overlay button to capture click/touch easily (20px high)
-    local slideBar = Instance.new("TextButton")
-    slideBar.Size = UDim2.new(0.92, 0, 0, 20)
-    slideBar.Position = UDim2.new(0.04, 0, 0, 22)
-    slideBar.BackgroundTransparency = 1
-    slideBar.Text = ""
-    slideBar.Parent = container
+    local track = Instance.new("Frame")
+    track.Size = UDim2.new(0.92, 0, 0, 8)
+    track.Position = UDim2.new(0.04, 0, 0, 30)
+    track.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
+    track.BorderSizePixel = 0
+    track.Parent = container
     
-    -- Visual background bar
-    local visualBar = Instance.new("Frame")
-    visualBar.Size = UDim2.new(1, 0, 0, 5)
-    visualBar.Position = UDim2.new(0, 0, 0.5, -2)
-    visualBar.BackgroundColor3 = Color3.fromRGB(45, 45, 60)
-    visualBar.BorderSizePixel = 0
-    visualBar.Parent = slideBar
+    local trCorner = Instance.new("UICorner")
+    trCorner.CornerRadius = UDim.new(1, 0)
+    trCorner.Parent = track
     
-    -- Active progress bar
+    local currentVal = Config[configKey] or min
+    local initRatio = math.clamp((currentVal - min) / (max - min), 0, 1)
+    
     local fill = Instance.new("Frame")
-    fill.Size = UDim2.new((Config[configKey] - min) / (max - min), 0, 1, 0)
+    fill.Size = UDim2.new(initRatio, 0, 1, 0)
     fill.BackgroundColor3 = Color3.fromRGB(0, 170, 255)
     fill.BorderSizePixel = 0
-    fill.Parent = visualBar
+    fill.Parent = track
     
-    local dragging = false
+    local fillCorner = Instance.new("UICorner")
+    fillCorner.CornerRadius = UDim.new(1, 0)
+    fillCorner.Parent = fill
     
-    local function update(input)
-        local pos = math.clamp((input.Position.X - slideBar.AbsolutePosition.X) / slideBar.AbsoluteSize.X, 0, 1)
-        local val = math.floor(min + (pos * (max - min)))
+    -- Hit box button across the entire track area for seamless clicks and drags
+    local hitBtn = Instance.new("TextButton")
+    hitBtn.Size = UDim2.new(0.92, 0, 0, 24)
+    hitBtn.Position = UDim2.new(0.04, 0, 0, 22)
+    hitBtn.BackgroundTransparency = 1
+    hitBtn.Text = ""
+    hitBtn.Parent = container
+    
+    local isDragging = false
+    
+    local function updateValue(input)
+        local trackPos = track.AbsolutePosition.X
+        local trackWidth = track.AbsoluteSize.X
+        if trackWidth <= 0 then return end
+        
+        local ratio = math.clamp((input.Position.X - trackPos) / trackWidth, 0, 1)
+        local val = math.floor(min + (ratio * (max - min)))
         Config[configKey] = val
         valLabel.Text = tostring(val)
-        fill.Size = UDim2.new(pos, 0, 1, 0)
-        callback(val)
+        fill.Size = UDim2.new(ratio, 0, 1, 0)
+        if callback then callback(val) end
         saveConfig()
     end
     
-    slideBar.InputBegan:Connect(function(input)
+    hitBtn.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-            dragging = true
-            update(input)
+            isDragging = true
+            updateValue(input)
         end
     end)
     
     UserInputService.InputEnded:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then 
-            dragging = false 
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            isDragging = false
         end
     end)
     
     UserInputService.InputChanged:Connect(function(input)
-        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
-            update(input)
+        if isDragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+            updateValue(input)
         end
     end)
 end
@@ -1183,7 +1184,7 @@ local function addDropdown(parent, text, options, configKey, callback)
             Config[configKey] = opt
             btn.Text = opt
             menu.Visible = false
-            callback(opt)
+            if callback then callback(opt) end
             saveConfig()
         end)
     end
@@ -1232,7 +1233,7 @@ local function addColorPicker(parent, text, configKey, callback)
         selectFrame.BackgroundTransparency = 1
         selectFrame.BorderColor3 = Color3.fromRGB(255, 255, 255)
         selectFrame.BorderSizePixel = 1
-        selectFrame.Visible = (Config[configKey][1] == c[1] and Config[configKey][2] == c[2] and Config[configKey][3] == c[3])
+        selectFrame.Visible = (Config[configKey] and Config[configKey][1] == c[1] and Config[configKey][2] == c[2] and Config[configKey][3] == c[3])
         selectFrame.Parent = cBox
         
         local sfCorner = Instance.new("UICorner")
@@ -1245,7 +1246,7 @@ local function addColorPicker(parent, text, configKey, callback)
             end
             selectFrame.Visible = true
             Config[configKey] = c
-            callback(toColor3(c))
+            if callback then callback(toColor3(c)) end
             saveConfig()
         end)
         
@@ -1275,7 +1276,7 @@ local function addTextBox(parent, text, placeholder, callback)
     box.FocusLost:Connect(function()
         if box.Text ~= "" then
             Config.ActiveConfigName = box.Text
-            callback(box.Text)
+            if callback then callback(box.Text) end
             saveConfig()
         end
     end)
@@ -1328,7 +1329,8 @@ addToggle(mainPage, "No Spread (Без разброса)", "NoSpread", function(
 -- Visuals Tab
 addToggle(visualPage, "Box ESP (2D Боксы)", "BoxESP", function(v) end)
 addToggle(visualPage, "Health ESP (Здоровье)", "HealthESP", function(v) end)
-addToggle(visualPage, "Name ESP (Ники)", "NameESP", function(v) end)
+addToggle(visualPage, "Name ESP (Ники и дистанция)", "NameESP", function(v) end)
+addToggle(visualPage, "Chams ESP (Подсветка тел)", "ChamsESP", function(v) end)
 addToggle(visualPage, "Enemy Visuals (Враги)", "EnemyESP", function(v) end)
 addColorPicker(visualPage, "Enemy ESP Color", "EnemyColor", function(v) end)
 addToggle(visualPage, "Team Visuals (Союзники)", "TeamESP", function(v) end)
@@ -1364,10 +1366,11 @@ end)
 addButton(settingsPage, "Load Config (Загрузить)", function()
     loadConfig(Config.ActiveConfigName)
     OcelHub:Destroy()
-    if FOVCircle then FOVCircle:Remove() end
-    for _, h in pairs(ESP_BillboardGuis) do h:Destroy() end
-    for _, h in pairs(Highlights) do h:Destroy() end
-    for _, conn in pairs(_G.ESP_Connections) do conn:Disconnect() end
+    if FOVCircle then pcall(function() FOVCircle:Remove() end) end
+    for _, entry in pairs(ESP_Entries) do cleanupESPEntry(entry) end
+    for _, hl in pairs(_G.ESP_Highlights) do pcall(function() hl:Destroy() end) end
+    for _, conn in pairs(_G.ESP_Connections) do pcall(function() conn:Disconnect() end) end
+    for _, draw in pairs(_G.ESP_Drawings) do pcall(function() draw:Remove() end) end
     _G.OcelHubLoaded = nil
     loadstring(readfile("sniper_duels.lua"))()
 end)
@@ -1377,3 +1380,4 @@ addToggle(settingsPage, "Autoload Config (Автозагрузка)", "AutoLoad"
 TabButtons["Main"].BackgroundTransparency = 0.5
 TabButtons["Main"].TextColor3 = Color3.fromRGB(0, 170, 255)
 Tabs["Main"].Visible = true
+
