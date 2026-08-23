@@ -235,7 +235,9 @@ end)
 pcall(function()
     local mt = getrawmetatable(game)
     local oldIndex = mt.__index
+    local oldNamecall = mt.__namecall
     setreadonly(mt, false)
+    
     mt.__index = newcclosure(function(self, key)
         if not checkcaller() and Config.SilentAim and self == Mouse and (key == "Hit" or key == "Target") then
             local target = getClosestPlayer()
@@ -246,8 +248,67 @@ pcall(function()
         end
         return oldIndex(self, key)
     end)
+    
+    mt.__namecall = newcclosure(function(self, ...)
+        local method = getnamecallmethod()
+        local args = {...}
+        if not checkcaller() and Config.SilentAim and self == Workspace then
+            if method == "Raycast" then
+                local origin = args[1]
+                local target = getClosestPlayer()
+                if target and target:FindFirstChild(Config.HitPart) then
+                    local hitPart = target[Config.HitPart]
+                    args[2] = (hitPart.Position - origin).Unit * 1000
+                    return oldNamecall(self, unpack(args))
+                end
+            elseif method == "FindPartOnRay" or method == "FindPartOnRayWithIgnoreList" or method == "FindPartOnRayWithWhiteList" then
+                local ray = args[1]
+                local origin = ray.Origin
+                local target = getClosestPlayer()
+                if target and target:FindFirstChild(Config.HitPart) then
+                    local hitPart = target[Config.HitPart]
+                    args[1] = Ray.new(origin, (hitPart.Position - origin).Unit * 1000)
+                    return oldNamecall(self, unpack(args))
+                end
+            end
+        end
+        return oldNamecall(self, ...)
+    end)
+    
     setreadonly(mt, true)
 end)
+
+-- hookmetamethod backup for newer executors
+if hookmetamethod then
+    pcall(function()
+        local oldNamecall
+        oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
+            local method = getnamecallmethod()
+            local args = {...}
+            if not checkcaller() and Config.SilentAim and self == Workspace then
+                if method == "Raycast" then
+                    local origin = args[1]
+                    local target = getClosestPlayer()
+                    if target and target:FindFirstChild(Config.HitPart) then
+                        local hitPart = target[Config.HitPart]
+                        args[2] = (hitPart.Position - origin).Unit * 1000
+                        return oldNamecall(self, unpack(args))
+                    end
+                elseif method == "FindPartOnRay" or method == "FindPartOnRayWithIgnoreList" or method == "FindPartOnRayWithWhiteList" then
+                    local ray = args[1]
+                    local origin = ray.Origin
+                    local target = getClosestPlayer()
+                    if target and target:FindFirstChild(Config.HitPart) then
+                        local hitPart = target[Config.HitPart]
+                        args[1] = Ray.new(origin, (hitPart.Position - origin).Unit * 1000)
+                        return oldNamecall(self, unpack(args))
+                    end
+                end
+            end
+            return oldNamecall(self, ...)
+        end)
+    end)
+end
 
 -- Triggerbot
 task.spawn(function()
@@ -382,15 +443,13 @@ end
 local function drawSkeleton(character, isPlayer, playerObj)
     if Skeletons[character] then return end
     
-    local lines = {
-        HeadToTorso = createLine(),
-        TorsoToLeftArm = createLine(),
-        TorsoToRightArm = createLine(),
-        TorsoToLeftLeg = createLine(),
-        TorsoToRightLeg = createLine()
-    }
+    -- Create up to 15 lines to accommodate R15 joints
+    local lines = {}
+    for i = 1, 15 do
+        local l = createLine()
+        if l then table.insert(lines, l) end
+    end
     
-    if not lines.HeadToTorso then return end
     Skeletons[character] = lines
     
     local conn
@@ -407,7 +466,7 @@ local function drawSkeleton(character, isPlayer, playerObj)
         
         local isEnabled = false
         if isPlayer then
-            if playerObj.Team == LocalPlayer.Team then
+            if playerObj.Team ~= nil and playerObj.Team == LocalPlayer.Team then
                 isEnabled = Config.TeamESP
             else
                 isEnabled = Config.EnemyESP
@@ -416,33 +475,66 @@ local function drawSkeleton(character, isPlayer, playerObj)
             isEnabled = Config.DummyESP
         end
         
-        local isR15 = character:FindFirstChild("UpperTorso") ~= nil
-        local head = character:FindFirstChild("Head")
-        local torso = character:FindFirstChild(isR15 and "UpperTorso" or "Torso")
-        local leftArm = character:FindFirstChild(isR15 and "LeftHand" or "Left Arm")
-        local rightArm = character:FindFirstChild(isR15 and "RightHand" or "Right Arm")
-        local leftLeg = character:FindFirstChild(isR15 and "LeftFoot" or "Left Leg")
-        local rightLeg = character:FindFirstChild(isR15 and "RightFoot" or "Right Leg")
-        
-        if isEnabled and head and torso and leftArm and rightArm and leftLeg and rightLeg then
-            local function setLine(line, part1, part2)
-                if not line then return end
-                local p1, onScreen1 = Camera:WorldToViewportPoint(part1.Position)
-                local p2, onScreen2 = Camera:WorldToViewportPoint(part2.Position)
-                if onScreen1 and onScreen2 then
-                    line.From = Vector2.new(p1.X, p1.Y)
-                    line.To = Vector2.new(p2.X, p2.Y)
-                    line.Color = toColor3(Config.SkeletonColor)
-                    line.Visible = true
-                else
+        if isEnabled then
+            local isR15 = character:FindFirstChild("UpperTorso") ~= nil
+            local connections = {}
+            
+            if isR15 then
+                connections = {
+                    {"Head", "UpperTorso"},
+                    {"UpperTorso", "LowerTorso"},
+                    -- Left Arm
+                    {"UpperTorso", "LeftUpperArm"},
+                    {"LeftUpperArm", "LeftLowerArm"},
+                    {"LeftLowerArm", "LeftHand"},
+                    -- Right Arm
+                    {"UpperTorso", "RightUpperArm"},
+                    {"RightUpperArm", "RightLowerArm"},
+                    {"RightLowerArm", "RightHand"},
+                    -- Left Leg
+                    {"LowerTorso", "LeftUpperLeg"},
+                    {"LeftUpperLeg", "LeftLowerLeg"},
+                    {"LeftLowerLeg", "LeftFoot"},
+                    -- Right Leg
+                    {"LowerTorso", "RightUpperLeg"},
+                    {"RightUpperLeg", "RightLowerLeg"},
+                    {"RightLowerLeg", "RightFoot"}
+                }
+            else
+                connections = {
+                    {"Head", "Torso"},
+                    {"Torso", "Left Arm"},
+                    {"Torso", "Right Arm"},
+                    {"Torso", "Left Leg"},
+                    {"Torso", "Right Leg"}
+                }
+            end
+            
+            for i, connPair in ipairs(connections) do
+                local part1 = character:FindFirstChild(connPair[1])
+                local part2 = character:FindFirstChild(connPair[2])
+                local line = lines[i]
+                
+                if line and part1 and part2 then
+                    local p1, onScreen1 = Camera:WorldToViewportPoint(part1.Position)
+                    local p2, onScreen2 = Camera:WorldToViewportPoint(part2.Position)
+                    if onScreen1 and onScreen2 then
+                        line.From = Vector2.new(p1.X, p1.Y)
+                        line.To = Vector2.new(p2.X, p2.Y)
+                        line.Color = toColor3(Config.SkeletonColor)
+                        line.Visible = true
+                    else
+                        line.Visible = false
+                    end
+                elseif line then
                     line.Visible = false
                 end
             end
-            setLine(lines.HeadToTorso, head, torso)
-            setLine(lines.TorsoToLeftArm, torso, leftArm)
-            setLine(lines.TorsoToRightArm, torso, rightArm)
-            setLine(lines.TorsoToLeftLeg, torso, leftLeg)
-            setLine(lines.TorsoToRightLeg, torso, rightLeg)
+            
+            -- Hide remaining unused lines
+            for i = #connections + 1, #lines do
+                if lines[i] then lines[i].Visible = false end
+            end
         else
             for _, l in pairs(lines) do if l then l.Visible = false end end
         end
@@ -463,7 +555,7 @@ local function createESP(character, isPlayer, playerObj)
     billboard.Size = UDim2.new(4.5, 0, 6, 0)
     billboard.AlwaysOnTop = true
     billboard.Adornee = hrp
-    billboard.Parent = CoreGui
+    billboard.Parent = LocalPlayer:FindFirstChildOfClass("PlayerGui") or CoreGui
     
     -- Bounding Box Frame
     local box = Instance.new("Frame")
@@ -990,18 +1082,28 @@ local function addSlider(parent, text, min, max, configKey, callback)
     valLabel.TextXAlignment = Enum.TextXAlignment.Right
     valLabel.Parent = container
     
-    local slideBar = Instance.new("Frame")
-    slideBar.Size = UDim2.new(0.92, 0, 0, 5)
-    slideBar.Position = UDim2.new(0.04, 0, 0, 30)
-    slideBar.BackgroundColor3 = Color3.fromRGB(45, 45, 60)
-    slideBar.BorderSizePixel = 0
+    -- Invisible interactive overlay button to capture click/touch easily (20px high)
+    local slideBar = Instance.new("TextButton")
+    slideBar.Size = UDim2.new(0.92, 0, 0, 20)
+    slideBar.Position = UDim2.new(0.04, 0, 0, 22)
+    slideBar.BackgroundTransparency = 1
+    slideBar.Text = ""
     slideBar.Parent = container
     
+    -- Visual background bar
+    local visualBar = Instance.new("Frame")
+    visualBar.Size = UDim2.new(1, 0, 0, 5)
+    visualBar.Position = UDim2.new(0, 0, 0.5, -2)
+    visualBar.BackgroundColor3 = Color3.fromRGB(45, 45, 60)
+    visualBar.BorderSizePixel = 0
+    visualBar.Parent = slideBar
+    
+    -- Active progress bar
     local fill = Instance.new("Frame")
     fill.Size = UDim2.new((Config[configKey] - min) / (max - min), 0, 1, 0)
     fill.BackgroundColor3 = Color3.fromRGB(0, 170, 255)
     fill.BorderSizePixel = 0
-    fill.Parent = slideBar
+    fill.Parent = visualBar
     
     local dragging = false
     
@@ -1016,18 +1118,20 @@ local function addSlider(parent, text, min, max, configKey, callback)
     end
     
     slideBar.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
             dragging = true
             update(input)
         end
     end)
     
     UserInputService.InputEnded:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then dragging = false end
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then 
+            dragging = false 
+        end
     end)
     
     UserInputService.InputChanged:Connect(function(input)
-        if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
             update(input)
         end
     end)
