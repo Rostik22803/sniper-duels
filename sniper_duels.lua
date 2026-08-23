@@ -1,13 +1,15 @@
 --[[
     OCEL HUB - Sniper Duels
     100% Local Custom UI Framework (No External Loadstring)
-    Ultimate stability: fixed team check bug, improved wall check, restored skeletons, added minimize.
+    Universal Engine-Native ESP (ScreenGui + Highlights, 100% Executor Compatibility)
 --]]
 
 -- Safety check: prevent duplicate run
 if _G.OcelHubLoaded then
-    local oldGui = game:GetService("CoreGui"):FindFirstChild("OcelHub") or game:GetService("Players").LocalPlayer:FindFirstChild("OcelHub")
+    local oldGui = game:GetService("CoreGui"):FindFirstChild("OcelHub") or (game:GetService("Players").LocalPlayer and game:GetService("Players").LocalPlayer:FindFirstChild("OcelHub"))
     if oldGui then oldGui:Destroy() end
+    local oldEsp = game:GetService("CoreGui"):FindFirstChild("OcelESP_Gui") or (game:GetService("Players").LocalPlayer and game:GetService("Players").LocalPlayer:FindFirstChild("OcelESP_Gui"))
+    if oldEsp then oldEsp:Destroy() end
     if _G.ESP_Connections then
         for _, conn in pairs(_G.ESP_Connections) do pcall(function() conn:Disconnect() end) end
     end
@@ -52,7 +54,7 @@ local Config = {
     ShowFOV = false,
     FOVColor = {0, 255, 0},
     FOVRadius = 120,
-    TeamCheck = false, -- Default to false to avoid team issues
+    TeamCheck = false,
     WallCheck = true,
     HitPart = "Head",
     
@@ -60,11 +62,12 @@ local Config = {
     NoRecoil = false,
     NoSpread = false,
     
-    -- Visuals (Box, HP, Names, Chams, Skeletons)
+    -- Visuals
     BoxESP = false,
     HealthESP = false,
     NameESP = false,
     ChamsESP = true,
+    ChamsStyle = "Highlight (Свечение)", -- Highlight, Box 2D, Filled Box, Corner Box, 3D Box
     EnemyESP = true,
     EnemyColor = {255, 50, 50},
     TeamESP = false,
@@ -135,51 +138,51 @@ local function loadConfig(customName)
     end)
 end
 
--- Load default config on startup
 loadConfig("default")
 
--- Visuals Storage & Tracking
-local ESP_Entries = {}
-local OriginalViewmodelProps = {}
-
--- Helper to safely create Drawing objects
-local function newDrawing(drawType, props)
-    local obj = nil
-    pcall(function()
-        obj = Drawing.new(drawType)
-        if props then
-            for k, v in pairs(props) do
-                obj[k] = v
-            end
-        end
-    end)
-    if obj then
-        table.insert(_G.ESP_Drawings, obj)
-    end
-    return obj
-end
-
--- Drawing FOV Circle
-local FOVCircle = newDrawing("Circle", {
-    Thickness = 1.5,
-    NumSides = 60,
-    Radius = Config.FOVRadius,
-    Filled = false,
-    Visible = false,
-    Color = toColor3(Config.FOVColor)
-})
-
--- Update FOV pos to center of screen
-RunService.RenderStepped:Connect(function()
-    if FOVCircle then
-        FOVCircle.Radius = Config.FOVRadius
-        FOVCircle.Color = toColor3(Config.FOVColor)
-        FOVCircle.Visible = Config.ShowFOV
-        FOVCircle.Position = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
+-- ==================== SCREEN GUI CONTAINERS ====================
+local GuiParent = CoreGui
+pcall(function()
+    if not CoreGui:IsA("LayerCollector") then
+        GuiParent = LocalPlayer:WaitForChild("PlayerGui")
     end
 end)
 
--- Helper: Wall Check (Fixed & Safe)
+local ESPGui = Instance.new("ScreenGui")
+ESPGui.Name = "OcelESP_Gui"
+ESPGui.ResetOnSpawn = false
+ESPGui.DisplayOrder = 10
+pcall(function() ESPGui.Parent = GuiParent end)
+if not ESPGui.Parent then pcall(function() ESPGui.Parent = LocalPlayer:WaitForChild("PlayerGui") end) end
+
+-- FOV Circle (Native ScreenGui + Drawing Fallback)
+local FOVFrame = Instance.new("Frame")
+FOVFrame.Name = "FOVCircle"
+FOVFrame.BackgroundTransparency = 1
+FOVFrame.AnchorPoint = Vector2.new(0.5, 0.5)
+FOVFrame.Position = UDim2.new(0.5, 0, 0.5, 0)
+FOVFrame.Size = UDim2.new(0, Config.FOVRadius * 2, 0, Config.FOVRadius * 2)
+FOVFrame.Visible = Config.ShowFOV
+FOVFrame.Parent = ESPGui
+
+local FOVStroke = Instance.new("UIStroke")
+FOVStroke.Thickness = 1.5
+FOVStroke.Color = toColor3(Config.FOVColor)
+FOVStroke.Parent = FOVFrame
+
+local FOVCorner = Instance.new("UICorner")
+FOVCorner.CornerRadius = UDim.new(1, 0)
+FOVCorner.Parent = FOVFrame
+
+RunService.RenderStepped:Connect(function()
+    if FOVFrame then
+        FOVFrame.Visible = Config.ShowFOV
+        FOVFrame.Size = UDim2.new(0, Config.FOVRadius * 2, 0, Config.FOVRadius * 2)
+        FOVStroke.Color = toColor3(Config.FOVColor)
+    end
+end)
+
+-- Helper: Wall Check
 local function isVisible(targetPart, character)
     if not Config.WallCheck then return true end
     
@@ -197,7 +200,7 @@ local function isVisible(targetPart, character)
     return true
 end
 
--- Helper: Find target (Fixed Team Check nil comparison)
+-- Helper: Find target
 local function getClosestPlayer()
     local closestTarget = nil
     local shortestDistance = math.huge
@@ -207,7 +210,6 @@ local function getClosestPlayer()
         if not char or not char:FindFirstChild("Humanoid") or not char:FindFirstChild(Config.HitPart) then return end
         if char.Humanoid.Health <= 0 then return end
         
-        -- Fix: Check team only if team is not nil, to avoid ignoring Neutral/No-team players
         if isPlayer and Config.TeamCheck and playerObj and playerObj.Team ~= nil and LocalPlayer.Team ~= nil and playerObj.Team == LocalPlayer.Team then 
             return 
         end
@@ -304,7 +306,7 @@ RunService.Heartbeat:Connect(function()
     end
 end)
 
--- Camera (Force in match/round)
+-- Camera
 RunService.RenderStepped:Connect(function()
     if Config.ThirdPerson then
         LocalPlayer.CameraMode = Enum.CameraMode.Classic
@@ -321,7 +323,7 @@ RunService.RenderStepped:Connect(function()
             SelfHighlight = Instance.new("Highlight")
             SelfHighlight.Name = "SelfChams"
             SelfHighlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-            SelfHighlight.Parent = CoreGui
+            pcall(function() SelfHighlight.Parent = GuiParent end)
             table.insert(_G.ESP_Highlights, SelfHighlight)
         end
         SelfHighlight.Adornee = LocalPlayer.Character
@@ -331,12 +333,16 @@ RunService.RenderStepped:Connect(function()
         SelfHighlight.OutlineOpacity = 0.8
         SelfHighlight.Enabled = true
     else
-        if SelfHighlight then SelfHighlight:Destroy() SelfHighlight = nil end
+        if SelfHighlight then SelfHighlight.Enabled = false end
     end
 end)
 
--- Viewmodel Chams (Hands & Weapon)
-local function applyChamsToPart(part, isArm)
+-- ==================== ADVANCED WEAPON & ARM CHAMS ====================
+local WeaponHighlight = nil
+local ArmHighlight = nil
+local OriginalViewmodelProps = {}
+
+local function applyPartChams(part, color)
     if not OriginalViewmodelProps[part] then
         OriginalViewmodelProps[part] = {
             Color = part.Color,
@@ -344,16 +350,9 @@ local function applyChamsToPart(part, isArm)
             Transparency = part.Transparency
         }
     end
-    
-    if isArm and Config.ArmChams then
-        part.Color = toColor3(Config.ArmColor)
-        part.Material = Enum.Material.ForceField
-        part.Transparency = 0.3
-    elseif not isArm and Config.WeaponChams then
-        part.Color = toColor3(Config.WeaponColor)
-        part.Material = Enum.Material.ForceField
-        part.Transparency = 0.3
-    end
+    part.Color = color
+    part.Material = Enum.Material.ForceField
+    part.Transparency = 0.25
 end
 
 local function restorePart(part)
@@ -367,45 +366,85 @@ local function restorePart(part)
 end
 
 task.spawn(function()
-    while task.wait(0.1) do
-        local viewmodel = Camera:FindFirstChild("ViewModel") or Camera:FindFirstChild("Viewmodel") or Camera:FindFirstChild("Arms") or Camera:FindFirstChildOfClass("Model")
-        if viewmodel and viewmodel ~= LocalPlayer.Character then
-            for _, part in pairs(viewmodel:GetDescendants()) do
+    while task.wait(0.08) do
+        local armColor = toColor3(Config.ArmColor)
+        local weaponColor = toColor3(Config.WeaponColor)
+        
+        -- Collect all viewmodel candidates across Camera, Workspace, and Character
+        local foundModels = {}
+        for _, child in pairs(Camera:GetChildren()) do
+            if child:IsA("Model") and child ~= LocalPlayer.Character then
+                table.insert(foundModels, child)
+            end
+        end
+        
+        for _, name in pairs({"Arms", "ViewModel", "Viewmodel", "FPSArms", "Weapon", LocalPlayer.Name .. "Arms", LocalPlayer.Name .. "_ViewModel"}) do
+            local obj = Workspace:FindFirstChild(name)
+            if obj and obj:IsA("Model") and obj ~= LocalPlayer.Character then
+                table.insert(foundModels, obj)
+            end
+        end
+        
+        -- Check equipped tool in Character
+        if LocalPlayer.Character then
+            for _, item in pairs(LocalPlayer.Character:GetChildren()) do
+                if item:IsA("Tool") or (item:IsA("Model") and item.Name:lower():find("gun") or item.Name:lower():find("sniper") or item.Name:lower():find("weapon")) then
+                    table.insert(foundModels, item)
+                end
+            end
+        end
+        
+        -- Process parts
+        for _, model in pairs(foundModels) do
+            for _, part in pairs(model:GetDescendants()) do
                 if part:IsA("BasePart") then
                     local name = part.Name:lower()
-                    local isArm = name:find("arm") or name:find("hand") or name:find("sleeve") or name:find("glove") or name:find("skin") or name:find("left") or name:find("right")
+                    local parentName = part.Parent and part.Parent.Name:lower() or ""
+                    local isArm = name:find("arm") or name:find("hand") or name:find("sleeve") or name:find("glove") or name:find("skin") or name:find("left") or name:find("right") or parentName:find("arm") or parentName:find("hand")
                     
-                    if (isArm and Config.ArmChams) or (not isArm and Config.WeaponChams) then
-                        applyChamsToPart(part, isArm)
+                    if isArm and Config.ArmChams then
+                        applyPartChams(part, armColor)
+                    elseif not isArm and Config.WeaponChams then
+                        applyPartChams(part, weaponColor)
                     else
                         restorePart(part)
                     end
                 end
             end
-        else
-            for part, _ in pairs(OriginalViewmodelProps) do
-                if part.Parent then restorePart(part) else OriginalViewmodelProps[part] = nil end
-            end
         end
     end
 end)
 
--- ==================== HIGH PERFORMANCE UNIFIED ESP ====================
+-- ==================== 100% NATIVE SCREEN GUI ESP SYSTEM ====================
+local ESP_Entries = {}
+
+local function setGuiLine(lineFrame, p1_2d, p2_2d, color, thickness)
+    local diff = p2_2d - p1_2d
+    local dist = diff.Magnitude
+    if dist < 1 then
+        lineFrame.Visible = false
+        return
+    end
+    local center = (p1_2d + p2_2d) / 2
+    local angle = math.deg(math.atan2(diff.Y, diff.X))
+    
+    lineFrame.Size = UDim2.new(0, dist, 0, thickness or 2)
+    lineFrame.Position = UDim2.new(0, center.X - dist / 2, 0, center.Y - (thickness or 2) / 2)
+    lineFrame.Rotation = angle
+    lineFrame.BackgroundColor3 = color
+    lineFrame.Visible = true
+end
+
 local function cleanupESPEntry(entry)
     if not entry then return end
     if entry.Connection then
         pcall(function() entry.Connection:Disconnect() end)
     end
-    if entry.BoxOutline then pcall(function() entry.BoxOutline:Remove() end) end
-    if entry.Box then pcall(function() entry.Box:Remove() end) end
-    if entry.HealthBg then pcall(function() entry.HealthBg:Remove() end) end
-    if entry.HealthFill then pcall(function() entry.HealthFill:Remove() end) end
-    if entry.NameTag then pcall(function() entry.NameTag:Remove() end) end
-    if entry.Highlight then pcall(function() entry.Highlight:Destroy() end) end
-    if entry.SkeletonLines then
-        for _, line in pairs(entry.SkeletonLines) do
-            pcall(function() line:Remove() end)
-        end
+    if entry.MainContainer then
+        pcall(function() entry.MainContainer:Destroy() end)
+    end
+    if entry.Highlight then
+        pcall(function() entry.Highlight:Destroy() end)
     end
 end
 
@@ -416,46 +455,112 @@ local function createESP(character, isPlayer, playerObj)
     local hum = character:WaitForChild("Humanoid", 5)
     if not hrp or not hum then return end
     
-    local entry = {
-        Character = character,
-        HRP = hrp,
-        Humanoid = hum,
-        IsPlayer = isPlayer,
-        PlayerObj = playerObj,
-        BoxOutline = newDrawing("Square", { Thickness = 3, Filled = false, Color = Color3.fromRGB(0, 0, 0), Visible = false }),
-        Box = newDrawing("Square", { Thickness = 1.5, Filled = false, Color = Color3.fromRGB(255, 255, 255), Visible = false }),
-        HealthBg = newDrawing("Square", { Thickness = 1, Filled = true, Color = Color3.fromRGB(0, 0, 0), Visible = false }),
-        HealthFill = newDrawing("Square", { Thickness = 1, Filled = true, Color = Color3.fromRGB(0, 255, 0), Visible = false }),
-        NameTag = newDrawing("Text", { Size = 13, Center = true, Outline = true, Color = Color3.fromRGB(255, 255, 255), Visible = false }),
-        SkeletonLines = {}
-    }
+    -- Main container inside ScreenGui
+    local container = Instance.new("Folder")
+    container.Name = "ESP_" .. character.Name
+    container.Parent = ESPGui
     
-    -- Pre-create 14 skeleton lines for max R15 joint fidelity
-    for i = 1, 14 do
-        local l = newDrawing("Line", { Thickness = 1.5, Color = toColor3(Config.SkeletonColor), Visible = false })
-        if l then table.insert(entry.SkeletonLines, l) end
+    -- 2D Box Frame
+    local boxFrame = Instance.new("Frame")
+    boxFrame.Name = "Box"
+    boxFrame.BackgroundTransparency = 1
+    boxFrame.BorderSizePixel = 0
+    boxFrame.Visible = false
+    boxFrame.Parent = container
+    
+    local boxStroke = Instance.new("UIStroke")
+    boxStroke.Thickness = 1.5
+    boxStroke.Color = Color3.fromRGB(255, 255, 255)
+    boxStroke.Parent = boxFrame
+    
+    -- Health Bar
+    local healthBg = Instance.new("Frame")
+    healthBg.Name = "HealthBg"
+    healthBg.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+    healthBg.BorderSizePixel = 0
+    healthBg.Visible = false
+    healthBg.Parent = container
+    
+    local healthFill = Instance.new("Frame")
+    healthFill.Name = "HealthFill"
+    healthFill.BackgroundColor3 = Color3.fromRGB(0, 255, 0)
+    healthFill.BorderSizePixel = 0
+    healthFill.Parent = healthBg
+    
+    -- Name Tag Label
+    local nameLabel = Instance.new("TextLabel")
+    nameLabel.Name = "NameTag"
+    nameLabel.BackgroundTransparency = 1
+    nameLabel.Font = Enum.Font.SourceSansBold
+    nameLabel.TextSize = 13
+    nameLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+    nameLabel.TextStrokeTransparency = 0.2
+    nameLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+    nameLabel.Visible = false
+    nameLabel.Parent = container
+    
+    -- Corner Box Lines (8 lines)
+    local cornerLines = {}
+    for i = 1, 8 do
+        local l = Instance.new("Frame")
+        l.Name = "Corner_" .. i
+        l.BorderSizePixel = 0
+        l.Visible = false
+        l.Parent = container
+        table.insert(cornerLines, l)
     end
     
-    -- Highlight (Chams)
+    -- 3D Box Lines (12 lines)
+    local box3DLines = {}
+    for i = 1, 12 do
+        local l = Instance.new("Frame")
+        l.Name = "Box3D_" .. i
+        l.BorderSizePixel = 0
+        l.Visible = false
+        l.Parent = container
+        table.insert(box3DLines, l)
+    end
+    
+    -- Skeleton Lines (14 lines for R15 & R6)
+    local skeletonLines = {}
+    for i = 1, 14 do
+        local l = Instance.new("Frame")
+        l.Name = "Skel_" .. i
+        l.BorderSizePixel = 0
+        l.Visible = false
+        l.Parent = container
+        table.insert(skeletonLines, l)
+    end
+    
+    -- Highlight Chams
     local highlight = Instance.new("Highlight")
     highlight.Name = "OcelHighlight"
     highlight.Adornee = character
     highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-    highlight.Parent = CoreGui
-    entry.Highlight = highlight
+    pcall(function() highlight.Parent = GuiParent end)
     table.insert(_G.ESP_Highlights, highlight)
     
-    local function hideDrawings()
-        if entry.BoxOutline then entry.BoxOutline.Visible = false end
-        if entry.Box then entry.Box.Visible = false end
-        if entry.HealthBg then entry.HealthBg.Visible = false end
-        if entry.HealthFill then entry.HealthFill.Visible = false end
-        if entry.NameTag then entry.NameTag.Visible = false end
-        if entry.SkeletonLines then
-            for _, line in pairs(entry.SkeletonLines) do
-                line.Visible = false
-            end
-        end
+    local entry = {
+        Character = character,
+        MainContainer = container,
+        BoxFrame = boxFrame,
+        BoxStroke = boxStroke,
+        HealthBg = healthBg,
+        HealthFill = healthFill,
+        NameLabel = nameLabel,
+        CornerLines = cornerLines,
+        Box3DLines = box3DLines,
+        SkeletonLines = skeletonLines,
+        Highlight = highlight
+    }
+    
+    local function hideAll()
+        boxFrame.Visible = false
+        healthBg.Visible = false
+        nameLabel.Visible = false
+        for _, l in pairs(cornerLines) do l.Visible = false end
+        for _, l in pairs(box3DLines) do l.Visible = false end
+        for _, l in pairs(skeletonLines) do l.Visible = false end
     end
     
     local conn
@@ -490,21 +595,21 @@ local function createESP(character, isPlayer, playerObj)
             mainColor = toColor3(Config.DummyColor)
         end
         
-        -- Update Chams
-        if entry.Highlight then
-            if isTargetEnabled and Config.ChamsESP then
-                entry.Highlight.Enabled = true
-                entry.Highlight.FillColor = mainColor
-                entry.Highlight.OutlineColor = mainColor
-                entry.Highlight.FillOpacity = 0.5
-                entry.Highlight.OutlineOpacity = 0.8
+        -- Highlight Chams Logic
+        if highlight then
+            if isTargetEnabled and Config.ChamsESP and (Config.ChamsStyle == "Highlight (Свечение)" or Config.ChamsStyle == "Highlight") then
+                highlight.Enabled = true
+                highlight.FillColor = mainColor
+                highlight.OutlineColor = mainColor
+                highlight.FillOpacity = 0.5
+                highlight.OutlineOpacity = 0.8
             else
-                entry.Highlight.Enabled = false
+                highlight.Enabled = false
             end
         end
         
         if not isTargetEnabled then
-            hideDrawings()
+            hideAll()
             return
         end
         
@@ -518,69 +623,125 @@ local function createESP(character, isPlayer, playerObj)
         
         if (topVis or botVis or rootVis) and rootScreen.Z > 0 then
             local height = math.abs(topScreen.Y - botScreen.Y)
-            if height < 6 then height = 6 end
-            local width = height * 0.6
+            if height < 8 then height = 8 end
+            local width = height * 0.62
             local boxX = rootScreen.X - (width / 2)
             local boxY = topScreen.Y
             
-            -- Box ESP
-            if Config.BoxESP then
-                if entry.BoxOutline then
-                    entry.BoxOutline.Position = Vector2.new(boxX - 1, boxY - 1)
-                    entry.BoxOutline.Size = Vector2.new(width + 2, height + 2)
-                    entry.BoxOutline.Visible = true
+            -- Chams Mode: Filled Box / Box 2D / Normal Box ESP
+            local showBox2D = Config.BoxESP or (Config.ChamsESP and (Config.ChamsStyle == "Box 2D (Квадратные)" or Config.ChamsStyle == "Filled Box (Залитые 2D)"))
+            local isFilledChams = Config.ChamsESP and Config.ChamsStyle == "Filled Box (Залитые 2D)"
+            
+            if showBox2D then
+                boxFrame.Size = UDim2.new(0, width, 0, height)
+                boxFrame.Position = UDim2.new(0, boxX, 0, boxY)
+                boxStroke.Color = mainColor
+                boxStroke.Thickness = 1.5
+                if isFilledChams then
+                    boxFrame.BackgroundColor3 = mainColor
+                    boxFrame.BackgroundTransparency = 0.55
+                else
+                    boxFrame.BackgroundTransparency = 1
                 end
-                if entry.Box then
-                    entry.Box.Position = Vector2.new(boxX, boxY)
-                    entry.Box.Size = Vector2.new(width, height)
-                    entry.Box.Color = mainColor
-                    entry.Box.Visible = true
-                end
+                boxFrame.Visible = true
             else
-                if entry.BoxOutline then entry.BoxOutline.Visible = false end
-                if entry.Box then entry.Box.Visible = false end
+                boxFrame.Visible = false
             end
             
-            -- Health Bar ESP
+            -- Corner Box Chams
+            if Config.ChamsESP and Config.ChamsStyle == "Corner Box (Уголки)" then
+                local cLen = math.clamp(width * 0.25, 4, 16)
+                local th = 2
+                -- TL
+                setGuiLine(cornerLines[1], Vector2.new(boxX, boxY), Vector2.new(boxX + cLen, boxY), mainColor, th)
+                setGuiLine(cornerLines[2], Vector2.new(boxX, boxY), Vector2.new(boxX, boxY + cLen), mainColor, th)
+                -- TR
+                setGuiLine(cornerLines[3], Vector2.new(boxX + width, boxY), Vector2.new(boxX + width - cLen, boxY), mainColor, th)
+                setGuiLine(cornerLines[4], Vector2.new(boxX + width, boxY), Vector2.new(boxX + width, boxY + cLen), mainColor, th)
+                -- BL
+                setGuiLine(cornerLines[5], Vector2.new(boxX, boxY + height), Vector2.new(boxX + cLen, boxY + height), mainColor, th)
+                setGuiLine(cornerLines[6], Vector2.new(boxX, boxY + height), Vector2.new(boxX, boxY + height - cLen), mainColor, th)
+                -- BR
+                setGuiLine(cornerLines[7], Vector2.new(boxX + width, boxY + height), Vector2.new(boxX + width - cLen, boxY + height), mainColor, th)
+                setGuiLine(cornerLines[8], Vector2.new(boxX + width, boxY + height), Vector2.new(boxX + width, boxY + height - cLen), mainColor, th)
+            else
+                for _, l in pairs(cornerLines) do l.Visible = false end
+            end
+            
+            -- 3D Box Chams
+            if Config.ChamsESP and Config.ChamsStyle == "3D Box (Объемный куб)" then
+                local cf = hrp.CFrame
+                local size = Vector3.new(2.2, 3, 1.8)
+                local corners = {
+                    cf * Vector3.new(-size.X, size.Y, -size.Z),
+                    cf * Vector3.new(size.X, size.Y, -size.Z),
+                    cf * Vector3.new(size.X, -size.Y, -size.Z),
+                    cf * Vector3.new(-size.X, -size.Y, -size.Z),
+                    cf * Vector3.new(-size.X, size.Y, size.Z),
+                    cf * Vector3.new(size.X, size.Y, size.Z),
+                    cf * Vector3.new(size.X, -size.Y, size.Z),
+                    cf * Vector3.new(-size.X, -size.Y, size.Z)
+                }
+                
+                local screenCorners = {}
+                local all3dOn = true
+                for i, c in ipairs(corners) do
+                    local sc, on = Camera:WorldToViewportPoint(c)
+                    if not on or sc.Z <= 0 then all3dOn = false break end
+                    screenCorners[i] = Vector2.new(sc.X, sc.Y)
+                end
+                
+                if all3dOn then
+                    local edges = {
+                        {1,2}, {2,3}, {3,4}, {4,1},
+                        {5,6}, {6,7}, {7,8}, {8,5},
+                        {1,5}, {2,6}, {3,7}, {4,8}
+                    }
+                    for i, edge in ipairs(edges) do
+                        setGuiLine(box3DLines[i], screenCorners[edge[1]], screenCorners[edge[2]], mainColor, 1.5)
+                    end
+                else
+                    for _, l in pairs(box3DLines) do l.Visible = false end
+                end
+            else
+                for _, l in pairs(box3DLines) do l.Visible = false end
+            end
+            
+            -- Health Bar
             if Config.HealthESP then
                 local maxHp = math.max(hum.MaxHealth, 1)
                 local curHp = math.clamp(hum.Health, 0, maxHp)
                 local hpRatio = curHp / maxHp
                 
-                if entry.HealthBg then
-                    entry.HealthBg.Position = Vector2.new(boxX - 6, boxY - 1)
-                    entry.HealthBg.Size = Vector2.new(4, height + 2)
-                    entry.HealthBg.Visible = true
-                end
-                if entry.HealthFill then
-                    local fillHeight = math.floor(height * hpRatio)
-                    entry.HealthFill.Position = Vector2.new(boxX - 5, boxY + height - fillHeight)
-                    entry.HealthFill.Size = Vector2.new(2, fillHeight)
-                    entry.HealthFill.Color = Color3.fromRGB(math.floor(255 * (1 - hpRatio)), math.floor(255 * hpRatio), 0)
-                    entry.HealthFill.Visible = true
-                end
+                healthBg.Size = UDim2.new(0, 4, 0, height)
+                healthBg.Position = UDim2.new(0, boxX - 6, 0, boxY)
+                healthBg.Visible = true
+                
+                local fillHeight = math.floor(height * hpRatio)
+                healthFill.Size = UDim2.new(1, 0, 0, fillHeight)
+                healthFill.Position = UDim2.new(0, 0, 0, height - fillHeight)
+                healthFill.BackgroundColor3 = Color3.fromRGB(math.floor(255 * (1 - hpRatio)), math.floor(255 * hpRatio), 0)
             else
-                if entry.HealthBg then entry.HealthBg.Visible = false end
-                if entry.HealthFill then entry.HealthFill.Visible = false end
+                healthBg.Visible = false
             end
             
-            -- Name & Distance ESP
+            -- Name & Distance
             if Config.NameESP then
-                if entry.NameTag then
-                    local dist = math.floor((Camera.CFrame.Position - hrp.Position).Magnitude)
-                    local displayName = isPlayer and (playerObj and playerObj.DisplayName or character.Name) or character.Name
-                    entry.NameTag.Text = displayName .. " [" .. dist .. "m]"
-                    entry.NameTag.Position = Vector2.new(rootScreen.X, boxY - 16)
-                    entry.NameTag.Color = mainColor
-                    entry.NameTag.Visible = true
-                end
+                local dist = math.floor((Camera.CFrame.Position - hrp.Position).Magnitude)
+                local displayName = isPlayer and (playerObj and playerObj.DisplayName or character.Name) or character.Name
+                nameLabel.Text = displayName .. " [" .. dist .. "m]"
+                nameLabel.TextColor3 = mainColor
+                nameLabel.Size = UDim2.new(0, 200, 0, 16)
+                nameLabel.Position = UDim2.new(0, rootScreen.X - 100, 0, boxY - 18)
+                nameLabel.Visible = true
             else
-                if entry.NameTag then entry.NameTag.Visible = false end
+                nameLabel.Visible = false
             end
             
-            -- Full Body Skeleton ESP (R15 & R6)
+            -- Full Body Anatomical Skeletons (R15 & R6)
             if Config.SkeletonESP then
                 local isR15 = character:FindFirstChild("UpperTorso") ~= nil
+                local skelColor = toColor3(Config.SkeletonColor)
                 local joints = isR15 and {
                     {"Head", "UpperTorso"},
                     {"UpperTorso", "LowerTorso"},
@@ -605,7 +766,7 @@ local function createESP(character, isPlayer, playerObj)
                 }
                 
                 for i, pair in ipairs(joints) do
-                    local line = entry.SkeletonLines[i]
+                    local line = skeletonLines[i]
                     if line then
                         local p1 = character:FindFirstChild(pair[1])
                         local p2 = character:FindFirstChild(pair[2])
@@ -613,10 +774,7 @@ local function createESP(character, isPlayer, playerObj)
                             local v1, on1 = Camera:WorldToViewportPoint(p1.Position)
                             local v2, on2 = Camera:WorldToViewportPoint(p2.Position)
                             if on1 and on2 and v1.Z > 0 and v2.Z > 0 then
-                                line.From = Vector2.new(v1.X, v1.Y)
-                                line.To = Vector2.new(v2.X, v2.Y)
-                                line.Color = toColor3(Config.SkeletonColor)
-                                line.Visible = true
+                                setGuiLine(line, Vector2.new(v1.X, v1.Y), Vector2.new(v2.X, v2.Y), skelColor, 2)
                             else
                                 line.Visible = false
                             end
@@ -626,16 +784,16 @@ local function createESP(character, isPlayer, playerObj)
                     end
                 end
                 
-                for i = #joints + 1, #entry.SkeletonLines do
-                    entry.SkeletonLines[i].Visible = false
+                for i = #joints + 1, #skeletonLines do
+                    skeletonLines[i].Visible = false
                 end
             else
-                for _, line in pairs(entry.SkeletonLines) do
+                for _, line in pairs(skeletonLines) do
                     line.Visible = false
                 end
             end
         else
-            hideDrawings()
+            hideAll()
         end
     end)
     
@@ -750,7 +908,8 @@ end)
 local OcelHub = Instance.new("ScreenGui")
 OcelHub.Name = "OcelHub"
 OcelHub.ResetOnSpawn = false
-OcelHub.Parent = CoreGui
+pcall(function() OcelHub.Parent = GuiParent end)
+if not OcelHub.Parent then pcall(function() OcelHub.Parent = LocalPlayer:WaitForChild("PlayerGui") end) end
 
 -- Dragging logic
 local function makeDraggable(frame, parent)
@@ -801,7 +960,6 @@ local TitleCorner = Instance.new("UICorner")
 TitleCorner.CornerRadius = UDim.new(0, 8)
 TitleCorner.Parent = TitleBar
 
--- Cover bottom corners of titlebar
 local CoverFrame = Instance.new("Frame")
 CoverFrame.Size = UDim2.new(1, 0, 0, 10)
 CoverFrame.Position = UDim2.new(0, 0, 1, -10)
@@ -820,7 +978,7 @@ TitleText.TextSize = 15
 TitleText.TextXAlignment = Enum.TextXAlignment.Left
 TitleText.Parent = TitleBar
 
--- Minimize Button (Collapses window)
+-- Minimize Button
 local MinimizeButton = Instance.new("TextButton")
 MinimizeButton.Size = UDim2.new(0, 25, 0, 25)
 MinimizeButton.Position = UDim2.new(1, -65, 0.5, -12)
@@ -852,11 +1010,10 @@ CloseCorner.Parent = CloseButton
 
 CloseButton.MouseButton1Click:Connect(function()
     OcelHub:Destroy()
-    if FOVCircle then pcall(function() FOVCircle:Remove() end) end
+    if ESPGui then ESPGui:Destroy() end
     for _, entry in pairs(ESP_Entries) do cleanupESPEntry(entry) end
     for _, hl in pairs(_G.ESP_Highlights) do pcall(function() hl:Destroy() end) end
     for _, conn in pairs(_G.ESP_Connections) do pcall(function() conn:Disconnect() end) end
-    for _, draw in pairs(_G.ESP_Drawings) do pcall(function() draw:Remove() end) end
     _G.OcelHubLoaded = nil
 end)
 
@@ -900,14 +1057,14 @@ end
 
 MinimizeButton.MouseButton1Click:Connect(toggleMinimize)
 
--- Keyboard toggle (Insert key to toggle visibility)
+-- Keyboard toggle (Insert key)
 UserInputService.InputBegan:Connect(function(input, processed)
     if not processed and input.KeyCode == Enum.KeyCode.Insert then
         MainFrame.Visible = not MainFrame.Visible
     end
 end)
 
--- Floating Mini Toggle Button (Always on screen to show/hide menu easily)
+-- Floating Mini Toggle Button
 local FloatingToggle = Instance.new("TextButton")
 FloatingToggle.Size = UDim2.new(0, 70, 0, 25)
 FloatingToggle.Position = UDim2.new(0, 10, 0, 10)
@@ -1044,7 +1201,7 @@ local function addToggle(parent, text, configKey, callback)
     end)
 end
 
--- Completely fixed and responsive Slider
+-- Responsive Slider
 local function addSlider(parent, text, min, max, configKey, callback)
     local container = createContainer(parent, 50)
     
@@ -1094,7 +1251,6 @@ local function addSlider(parent, text, min, max, configKey, callback)
     fillCorner.CornerRadius = UDim.new(1, 0)
     fillCorner.Parent = fill
     
-    -- Hit box button across the entire track area for seamless clicks and drags
     local hitBtn = Instance.new("TextButton")
     hitBtn.Size = UDim2.new(0.92, 0, 0, 24)
     hitBtn.Position = UDim2.new(0.04, 0, 0, 22)
@@ -1143,8 +1299,8 @@ local function addDropdown(parent, text, options, configKey, callback)
     addLabel(container, text)
     
     local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(0, 120, 0, 24)
-    btn.Position = UDim2.new(0.92, -120, 0.5, -12)
+    btn.Size = UDim2.new(0, 150, 0, 24)
+    btn.Position = UDim2.new(0.92, -150, 0.5, -12)
     btn.BackgroundColor3 = Color3.fromRGB(30, 30, 42)
     btn.Text = Config[configKey]
     btn.TextColor3 = Color3.fromRGB(240, 240, 240)
@@ -1160,7 +1316,7 @@ local function addDropdown(parent, text, options, configKey, callback)
     menu.Size = UDim2.new(1, 0, 0, #options * 25)
     menu.Position = UDim2.new(0, 0, 1, 2)
     menu.BackgroundColor3 = Color3.fromRGB(25, 25, 35)
-    menu.ZIndex = 10
+    menu.ZIndex = 15
     menu.Visible = false
     menu.Parent = btn
     
@@ -1176,8 +1332,8 @@ local function addDropdown(parent, text, options, configKey, callback)
         optBtn.Text = opt
         optBtn.TextColor3 = Color3.fromRGB(200, 200, 200)
         optBtn.Font = Enum.Font.SourceSans
-        optBtn.TextSize = 13
-        optBtn.ZIndex = 11
+        optBtn.TextSize = 12
+        optBtn.ZIndex = 16
         optBtn.Parent = menu
         
         optBtn.MouseButton1Click:Connect(function()
@@ -1327,10 +1483,11 @@ addToggle(mainPage, "No Recoil (Без отдачи)", "NoRecoil", function(v) e
 addToggle(mainPage, "No Spread (Без разброса)", "NoSpread", function(v) end)
 
 -- Visuals Tab
+addToggle(visualPage, "Chams ESP (Чамсы)", "ChamsESP", function(v) end)
+addDropdown(visualPage, "Chams Style (Стиль чамсов)", {"Highlight (Свечение)", "Box 2D (Квадратные)", "Filled Box (Залитые 2D)", "Corner Box (Уголки)", "3D Box (Объемный куб)"}, "ChamsStyle", function(v) end)
 addToggle(visualPage, "Box ESP (2D Боксы)", "BoxESP", function(v) end)
 addToggle(visualPage, "Health ESP (Здоровье)", "HealthESP", function(v) end)
 addToggle(visualPage, "Name ESP (Ники и дистанция)", "NameESP", function(v) end)
-addToggle(visualPage, "Chams ESP (Подсветка тел)", "ChamsESP", function(v) end)
 addToggle(visualPage, "Enemy Visuals (Враги)", "EnemyESP", function(v) end)
 addColorPicker(visualPage, "Enemy ESP Color", "EnemyColor", function(v) end)
 addToggle(visualPage, "Team Visuals (Союзники)", "TeamESP", function(v) end)
@@ -1366,11 +1523,10 @@ end)
 addButton(settingsPage, "Load Config (Загрузить)", function()
     loadConfig(Config.ActiveConfigName)
     OcelHub:Destroy()
-    if FOVCircle then pcall(function() FOVCircle:Remove() end) end
+    if ESPGui then ESPGui:Destroy() end
     for _, entry in pairs(ESP_Entries) do cleanupESPEntry(entry) end
     for _, hl in pairs(_G.ESP_Highlights) do pcall(function() hl:Destroy() end) end
     for _, conn in pairs(_G.ESP_Connections) do pcall(function() conn:Disconnect() end) end
-    for _, draw in pairs(_G.ESP_Drawings) do pcall(function() draw:Remove() end) end
     _G.OcelHubLoaded = nil
     loadstring(readfile("sniper_duels.lua"))()
 end)
