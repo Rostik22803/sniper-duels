@@ -1,13 +1,14 @@
 --[[
     SNIPER DUELS - Multi-Functional Cheat Script
     Developed for: https://www.roblox.com/games/109397169461300/SNIPER-DUELS
-    UI Library: Orion UI
+    UI Library: Rayfield UI (Ocel Hub Customization)
 --]]
 
--- Wait for game to load
-if not game:IsLoaded() then
-    game.Loaded:Wait()
+-- Safety check: prevent multiple execution
+if _G.OcelHubLoaded then
+    return
 end
+_G.OcelHubLoaded = true
 
 -- Services
 local Players = game:GetService("Players")
@@ -15,14 +16,13 @@ local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 local CoreGui = game:GetService("CoreGui")
-local HttpService = game:GetService("HttpService")
 
 -- Local Player
 local LocalPlayer = Players.LocalPlayer
 local Camera = Workspace.CurrentCamera
 local Mouse = LocalPlayer:GetMouse()
 
--- Settings Tables
+-- Default Settings
 local Config = {
     -- Combat
     SilentAim = false,
@@ -53,7 +53,7 @@ local Config = {
     SkeletonESP = false,
     SkeletonColor = Color3.fromRGB(255, 255, 255),
     
-    -- Local Visuals (Self, Arms, Weapons)
+    -- Local Visuals
     SelfChams = false,
     SelfColor = Color3.fromRGB(0, 170, 255),
     ArmChams = false,
@@ -97,9 +97,7 @@ end)
 local function isVisible(targetPart, character)
     if not Config.WallCheck then return true end
     
-    local castPoints = {Camera.CFrame.Position, targetPart.Position}
     local ignoreList = {LocalPlayer.Character, character}
-    
     local raycastParams = RaycastParams.new()
     raycastParams.FilterType = Enum.RaycastFilterType.Exclude
     raycastParams.FilterDescendantsInstances = ignoreList
@@ -113,7 +111,7 @@ local function isVisible(targetPart, character)
     return true
 end
 
--- Helper: Find Target for Aimbot / Silent Aim
+-- Helper: Find Target
 local function getClosestPlayer()
     local closestTarget = nil
     local shortestDistance = math.huge
@@ -268,7 +266,6 @@ end)
 task.spawn(function()
     while task.wait(0.1) do
         if Config.ArmChams or Config.WeaponChams then
-            -- Typically viewmodel is stored in Camera
             local viewmodel = Camera:FindFirstChild("ViewModel") or Camera:FindFirstChild("Viewmodel") or Camera:FindFirstChild("Arms") or Camera:FindFirstChildOfClass("Model")
             if viewmodel and viewmodel ~= LocalPlayer.Character then
                 for _, part in pairs(viewmodel:GetDescendants()) do
@@ -449,7 +446,7 @@ task.spawn(function()
     end
 end)
 
--- Gun Mods: No Recoil & No Spread Loop
+-- Gun Mods Loop
 task.spawn(function()
     while task.wait(0.5) do
         if Config.NoRecoil or Config.NoSpread then
@@ -534,7 +531,7 @@ UserInputService.JumpRequest:Connect(function()
     end
 end)
 
--- Noclip and Fly Functionality
+-- Noclip and Fly
 local FlyBodyVelocity
 local FlyBodyGyro
 RunService.RenderStepped:Connect(function()
@@ -595,409 +592,387 @@ RunService.RenderStepped:Connect(function()
 end)
 
 
--- ==================== UI LIBRARY (ORION) ====================
-local OrionLib = loadstring(game:HttpGet(('https://raw.githubusercontent.com/shlexware/Orion/main/source')))()
+-- ==================== RAYFIELD UI LIBRARY ====================
+local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
 
-local Window = OrionLib:MakeWindow({
-    Name = "Vyrox - Sniper Duels",
-    HidePremium = true,
-    SaveConfig = true,
-    ConfigFolder = "VyroxSniperDuels",
-    IntroText = "Vyrox loading..."
+local Window = Rayfield:CreateWindow({
+   Name = "Ocel Hub - Sniper Duels",
+   LoadingTitle = "Ocel Hub",
+   LoadingSubtitle = "Sniper Duels Edition",
+   ConfigurationSaving = {
+      Enabled = true,
+      FolderName = "OcelHubConfigs",
+      FileName = "SniperDuels"
+   },
+   Discord = {
+      Enabled = false,
+      Invite = "",
+      RememberJoins = true
+   },
+   KeySystem = false
 })
 
 -- MAIN TAB
-local MainTab = Window:MakeTab({
-    Name = "Main",
-    Icon = "rbxassetid://4483345998",
-    PremiumOnly = false
-})
+local MainTab = Window:CreateTab("Main", 4483345998)
 
 -- Combat Section
-MainTab:AddSection({
-    Name = "Combat"
+MainTab:CreateSection("Combat")
+
+MainTab:CreateToggle({
+   Name = "Silent Aim",
+   CurrentValue = Config.SilentAim,
+   Flag = "SilentAim",
+   Callback = function(Value)
+      Config.SilentAim = Value
+   end
 })
 
-MainTab:AddToggle({
-    Name = "Silent Aim",
-    Default = Config.SilentAim,
-    Callback = function(Value)
-        Config.SilentAim = Value
-    end
+MainTab:CreateToggle({
+   Name = "Aimbot",
+   CurrentValue = Config.Aimbot,
+   Flag = "Aimbot",
+   Callback = function(Value)
+      Config.Aimbot = Value
+   end
 })
 
-MainTab:AddToggle({
-    Name = "Aimbot",
-    Default = Config.Aimbot,
-    Callback = function(Value)
-        Config.Aimbot = Value
-    end
+MainTab:CreateToggle({
+   Name = "Triggerbot",
+   CurrentValue = Config.Triggerbot,
+   Flag = "Triggerbot",
+   Callback = function(Value)
+      Config.Triggerbot = Value
+   end
 })
 
-MainTab:AddToggle({
-    Name = "Triggerbot",
-    Default = Config.Triggerbot,
-    Callback = function(Value)
-        Config.Triggerbot = Value
-    end
+MainTab:CreateToggle({
+   Name = "Spinbot",
+   CurrentValue = Config.Spinbot,
+   Flag = "Spinbot",
+   Callback = function(Value)
+      Config.Spinbot = Value
+   end
 })
 
-MainTab:AddToggle({
-    Name = "Spinbot",
-    Default = Config.Spinbot,
-    Callback = function(Value)
-        Config.Spinbot = Value
-    end
-})
-
-MainTab:AddSlider({
-    Name = "Spin Speed",
-    Min = 10,
-    Max = 150,
-    Default = Config.SpinSpeed,
-    Color = Color3.fromRGB(255,255,255),
-    Increment = 5,
-    ValueName = "speed",
-    Callback = function(Value)
-        Config.SpinSpeed = Value
-    end
+MainTab:CreateSlider({
+   Name = "Spin Speed",
+   Min = 10,
+   Max = 150,
+   CurrentValue = Config.SpinSpeed,
+   Flag = "SpinSpeed",
+   Callback = function(Value)
+      Config.SpinSpeed = Value
+   end
 })
 
 -- Config Section
-MainTab:AddSection({
-    Name = "Config"
+MainTab:CreateSection("Config")
+
+MainTab:CreateToggle({
+   Name = "Show FOV",
+   CurrentValue = Config.ShowFOV,
+   Flag = "ShowFOV",
+   Callback = function(Value)
+      Config.ShowFOV = Value
+   end
 })
 
-MainTab:AddToggle({
-    Name = "Show FOV",
-    Default = Config.ShowFOV,
-    Callback = function(Value)
-        Config.ShowFOV = Value
-    end
+MainTab:CreateColorpicker({
+   Name = "FOV Circle Color",
+   DefaultColor = Config.FOVColor,
+   Flag = "FOVColor",
+   Callback = function(Value)
+      Config.FOVColor = Value
+   end
 })
 
-MainTab:AddColorpicker({
-    Name = "FOV Circle Color",
-    Default = Config.FOVColor,
-    Callback = function(Value)
-        Config.FOVColor = Value
-    end
+MainTab:CreateSlider({
+   Name = "FOV Radius",
+   Min = 10,
+   Max = 800,
+   CurrentValue = Config.FOVRadius,
+   Flag = "FOVRadius",
+   Callback = function(Value)
+      Config.FOVRadius = Value
+   end
 })
 
-MainTab:AddSlider({
-    Name = "FOV Radius",
-    Min = 10,
-    Max = 800,
-    Default = Config.FOVRadius,
-    Color = Color3.fromRGB(255,255,255),
-    Increment = 5,
-    ValueName = "pixels",
-    Callback = function(Value)
-        Config.FOVRadius = Value
-    end
+MainTab:CreateToggle({
+   Name = "Team Check",
+   CurrentValue = Config.TeamCheck,
+   Flag = "TeamCheck",
+   Callback = function(Value)
+      Config.TeamCheck = Value
+   end
 })
 
-MainTab:AddToggle({
-    Name = "Team Check",
-    Default = Config.TeamCheck,
-    Callback = function(Value)
-        Config.TeamCheck = Value
-    end
+MainTab:CreateToggle({
+   Name = "Wall Check",
+   CurrentValue = Config.WallCheck,
+   Flag = "WallCheck",
+   Callback = function(Value)
+      Config.WallCheck = Value
+   end
 })
 
-MainTab:AddToggle({
-    Name = "Wall Check",
-    Default = Config.WallCheck,
-    Callback = function(Value)
-        Config.WallCheck = Value
-    end
-})
-
-MainTab:AddDropdown({
-    Name = "Hit Part",
-    Default = "Head",
-    Options = {"Head", "Torso", "HumanoidRootPart"},
-    Callback = function(Value)
-        Config.HitPart = Value
-    end
+MainTab:CreateDropdown({
+   Name = "Hit Part",
+   Options = {"Head", "Torso", "HumanoidRootPart"},
+   CurrentOption = {Config.HitPart},
+   Flag = "HitPart",
+   Callback = function(Value)
+      Config.HitPart = Value[1]
+   end
 })
 
 -- Gun Mods Section
-MainTab:AddSection({
-    Name = "Gun Mods"
+MainTab:CreateSection("Gun Mods")
+
+MainTab:CreateToggle({
+   Name = "No Recoil",
+   CurrentValue = Config.NoRecoil,
+   Flag = "NoRecoil",
+   Callback = function(Value)
+      Config.NoRecoil = Value
+   end
 })
 
-MainTab:AddToggle({
-    Name = "No Recoil",
-    Default = Config.NoRecoil,
-    Callback = function(Value)
-        Config.NoRecoil = Value
-    end
-})
-
-MainTab:AddToggle({
-    Name = "No Bullet Spread",
-    Default = Config.NoSpread,
-    Callback = function(Value)
-        Config.NoSpread = Value
-    end
+MainTab:CreateToggle({
+   Name = "No Bullet Spread",
+   CurrentValue = Config.NoSpread,
+   Flag = "NoSpread",
+   Callback = function(Value)
+      Config.NoSpread = Value
+   end
 })
 
 -- Visuals Section
-MainTab:AddSection({
-    Name = "Visuals (Chams & ESP)"
+MainTab:CreateSection("Visuals")
+
+MainTab:CreateToggle({
+   Name = "Enemy ESP",
+   CurrentValue = Config.EnemyESP,
+   Flag = "EnemyESP",
+   Callback = function(Value)
+      Config.EnemyESP = Value
+   end
 })
 
-MainTab:AddToggle({
-    Name = "Enemy ESP",
-    Default = Config.EnemyESP,
-    Callback = function(Value)
-        Config.EnemyESP = Value
-    end
+MainTab:CreateColorpicker({
+   Name = "Enemy ESP Color",
+   DefaultColor = Config.EnemyColor,
+   Flag = "EnemyColor",
+   Callback = function(Value)
+      Config.EnemyColor = Value
+   end
 })
 
-MainTab:AddColorpicker({
-    Name = "Enemy ESP Color",
-    Default = Config.EnemyColor,
-    Callback = function(Value)
-        Config.EnemyColor = Value
-    end
+MainTab:CreateToggle({
+   Name = "Team ESP",
+   CurrentValue = Config.TeamESP,
+   Flag = "TeamESP",
+   Callback = function(Value)
+      Config.TeamESP = Value
+   end
 })
 
-MainTab:AddToggle({
-    Name = "Team ESP",
-    Default = Config.TeamESP,
-    Callback = function(Value)
-        Config.TeamESP = Value
-    end
+MainTab:CreateColorpicker({
+   Name = "Team ESP Color",
+   DefaultColor = Config.TeamColor,
+   Flag = "TeamColor",
+   Callback = function(Value)
+      Config.TeamColor = Value
+   end
 })
 
-MainTab:AddColorpicker({
-    Name = "Team ESP Color",
-    Default = Config.TeamColor,
-    Callback = function(Value)
-        Config.TeamColor = Value
-    end
+MainTab:CreateToggle({
+   Name = "Training Dummy ESP",
+   CurrentValue = Config.DummyESP,
+   Flag = "DummyESP",
+   Callback = function(Value)
+      Config.DummyESP = Value
+   end
 })
 
-MainTab:AddToggle({
-    Name = "Training Dummy ESP",
-    Default = Config.DummyESP,
-    Callback = function(Value)
-        Config.DummyESP = Value
-    end
+MainTab:CreateColorpicker({
+   Name = "Dummy ESP Color",
+   DefaultColor = Config.DummyColor,
+   Flag = "DummyColor",
+   Callback = function(Value)
+      Config.DummyColor = Value
+   end
 })
 
-MainTab:AddColorpicker({
-    Name = "Dummy ESP Color",
-    Default = Config.DummyColor,
-    Callback = function(Value)
-        Config.DummyColor = Value
-    end
+MainTab:CreateToggle({
+   Name = "Skeleton ESP",
+   CurrentValue = Config.SkeletonESP,
+   Flag = "SkeletonESP",
+   Callback = function(Value)
+      Config.SkeletonESP = Value
+   end
 })
 
-MainTab:AddToggle({
-    Name = "Skeleton ESP",
-    Default = Config.SkeletonESP,
-    Callback = function(Value)
-        Config.SkeletonESP = Value
-    end
+MainTab:CreateColorpicker({
+   Name = "Skeleton Color",
+   DefaultColor = Config.SkeletonColor,
+   Flag = "SkeletonColor",
+   Callback = function(Value)
+      Config.SkeletonColor = Value
+   end
 })
 
-MainTab:AddColorpicker({
-    Name = "Skeleton ESP Color",
-    Default = Config.SkeletonColor,
-    Callback = function(Value)
-        Config.SkeletonColor = Value
-    end
-})
 
 -- LOCAL VISUALS TAB
-local LocalVisualsTab = Window:MakeTab({
-    Name = "Local Visuals",
-    Icon = "rbxassetid://4483345998",
-    PremiumOnly = false
+local LocalTab = Window:CreateTab("Local Visuals", 4483345998)
+
+LocalTab:CreateSection("Self & Viewmodel Chams")
+
+LocalTab:CreateToggle({
+   Name = "Chams on Self",
+   CurrentValue = Config.SelfChams,
+   Flag = "SelfChams",
+   Callback = function(Value)
+      Config.SelfChams = Value
+   end
 })
 
-LocalVisualsTab:AddSection({
-    Name = "Self & Viewmodel Chams"
+LocalTab:CreateColorpicker({
+   Name = "Self Color",
+   DefaultColor = Config.SelfColor,
+   Flag = "SelfColor",
+   Callback = function(Value)
+      Config.SelfColor = Value
+   end
 })
 
-LocalVisualsTab:AddToggle({
-    Name = "Chams on Self (Чамсы на себя)",
-    Default = Config.SelfChams,
-    Callback = function(Value)
-        Config.SelfChams = Value
-    end
+LocalTab:CreateToggle({
+   Name = "Chams on Hands",
+   CurrentValue = Config.ArmChams,
+   Flag = "ArmChams",
+   Callback = function(Value)
+      Config.ArmChams = Value
+   end
 })
 
-LocalVisualsTab:AddColorpicker({
-    Name = "Self Color",
-    Default = Config.SelfColor,
-    Callback = function(Value)
-        Config.SelfColor = Value
-    end
+LocalTab:CreateColorpicker({
+   Name = "Hands Color",
+   DefaultColor = Config.ArmColor,
+   Flag = "ArmColor",
+   Callback = function(Value)
+      Config.ArmColor = Value
+   end
 })
 
-LocalVisualsTab:AddToggle({
-    Name = "Chams on Hands (Чамсы на руки)",
-    Default = Config.ArmChams,
-    Callback = function(Value)
-        Config.ArmChams = Value
-    end
+LocalTab:CreateToggle({
+   Name = "Chams on Weapon",
+   CurrentValue = Config.WeaponChams,
+   Flag = "WeaponChams",
+   Callback = function(Value)
+      Config.WeaponChams = Value
+   end
 })
 
-LocalVisualsTab:AddColorpicker({
-    Name = "Hands Color",
-    Default = Config.ArmColor,
-    Callback = function(Value)
-        Config.ArmColor = Value
-    end
+LocalTab:CreateColorpicker({
+   Name = "Weapon Color",
+   DefaultColor = Config.WeaponColor,
+   Flag = "WeaponColor",
+   Callback = function(Value)
+      Config.WeaponColor = Value
+   end
 })
 
-LocalVisualsTab:AddToggle({
-    Name = "Chams on Weapon (Чамсы на оружие)",
-    Default = Config.WeaponChams,
-    Callback = function(Value)
-        Config.WeaponChams = Value
-    end
+LocalTab:CreateSection("Camera")
+
+LocalTab:CreateToggle({
+   Name = "Third Person",
+   CurrentValue = Config.ThirdPerson,
+   Flag = "ThirdPerson",
+   Callback = function(Value)
+      Config.ThirdPerson = Value
+   end
 })
 
-LocalVisualsTab:AddColorpicker({
-    Name = "Weapon Color",
-    Default = Config.WeaponColor,
-    Callback = function(Value)
-        Config.WeaponColor = Value
-    end
+LocalTab:CreateSlider({
+   Name = "Third Person Distance",
+   Min = 5,
+   Max = 100,
+   CurrentValue = Config.ThirdPersonDistance,
+   Flag = "ThirdPersonDistance",
+   Callback = function(Value)
+      Config.ThirdPersonDistance = Value
+   end
 })
 
-LocalVisualsTab:AddSection({
-    Name = "Camera"
-})
-
-LocalVisualsTab:AddToggle({
-    Name = "Third Person (3 Лицо)",
-    Default = Config.ThirdPerson,
-    Callback = function(Value)
-        Config.ThirdPerson = Value
-    end
-})
-
-LocalVisualsTab:AddSlider({
-    Name = "Third Person Distance",
-    Min = 5,
-    Max = 100,
-    Default = Config.ThirdPersonDistance,
-    Color = Color3.fromRGB(255,255,255),
-    Increment = 1,
-    ValueName = "studs",
-    Callback = function(Value)
-        Config.ThirdPersonDistance = Value
-    end
-})
 
 -- EXTRA TAB
-local ExtraTab = Window:MakeTab({
-    Name = "Extra",
-    Icon = "rbxassetid://4483345998",
-    PremiumOnly = false
+local ExtraTab = Window:CreateTab("Extra", 4483345998)
+
+ExtraTab:CreateSection("Movement")
+
+ExtraTab:CreateSlider({
+   Name = "WalkSpeed Speed",
+   Min = 16,
+   Max = 250,
+   CurrentValue = Config.WalkSpeed,
+   Flag = "WalkSpeed",
+   Callback = function(Value)
+      Config.WalkSpeed = Value
+   end
 })
 
-ExtraTab:AddSection({
-    Name = "Player Enhancements"
+ExtraTab:CreateSlider({
+   Name = "Jump Power",
+   Min = 50,
+   Max = 350,
+   CurrentValue = Config.JumpPower,
+   Flag = "JumpPower",
+   Callback = function(Value)
+      Config.JumpPower = Value
+   end
 })
 
-ExtraTab:AddSlider({
-    Name = "WalkSpeed Speed",
-    Min = 16,
-    Max = 250,
-    Default = Config.WalkSpeed,
-    Color = Color3.fromRGB(255,255,255),
-    Increment = 1,
-    ValueName = "studs",
-    Callback = function(Value)
-        Config.WalkSpeed = Value
-    end
+ExtraTab:CreateToggle({
+   Name = "Infinite Jump",
+   CurrentValue = Config.InfJump,
+   Flag = "InfJump",
+   Callback = function(Value)
+      Config.InfJump = Value
+   end
 })
 
-ExtraTab:AddSlider({
-    Name = "Jump Power",
-    Min = 50,
-    Max = 350,
-    Default = Config.JumpPower,
-    Color = Color3.fromRGB(255,255,255),
-    Increment = 1,
-    ValueName = "power",
-    Callback = function(Value)
-        Config.JumpPower = Value
-    end
+ExtraTab:CreateToggle({
+   Name = "Noclip",
+   CurrentValue = Config.Noclip,
+   Flag = "Noclip",
+   Callback = function(Value)
+      Config.Noclip = Value
+   end
 })
 
-ExtraTab:AddToggle({
-    Name = "Infinite Jump",
-    Default = Config.InfJump,
-    Callback = function(Value)
-        Config.InfJump = Value
-    end
+ExtraTab:CreateToggle({
+   Name = "Fly",
+   CurrentValue = Config.Fly,
+   Flag = "Fly",
+   Callback = function(Value)
+      Config.Fly = Value
+   end
 })
 
-ExtraTab:AddToggle({
-    Name = "Noclip",
-    Default = Config.Noclip,
-    Callback = function(Value)
-        Config.Noclip = Value
-    end
+ExtraTab:CreateSlider({
+   Name = "Fly Speed",
+   Min = 10,
+   Max = 300,
+   CurrentValue = Config.FlySpeed,
+   Flag = "FlySpeed",
+   Callback = function(Value)
+      Config.FlySpeed = Value
+   end
 })
 
-ExtraTab:AddToggle({
-    Name = "Fly",
-    Default = Config.Fly,
-    Callback = function(Value)
-        Config.Fly = Value
-    end
-})
-
-ExtraTab:AddSlider({
-    Name = "Fly Speed",
-    Min = 10,
-    Max = 300,
-    Default = Config.FlySpeed,
-    Color = Color3.fromRGB(255,255,255),
-    Increment = 5,
-    ValueName = "speed",
-    Callback = function(Value)
-        Config.FlySpeed = Value
-    end
-})
-
--- SETTINGS TAB
-local SettingsTab = Window:MakeTab({
-    Name = "Settings",
-    Icon = "rbxassetid://4483345998",
-    PremiumOnly = false
-})
-
-SettingsTab:AddSection({
-    Name = "Config Settings"
-})
-
-SettingsTab:AddButton({
-    Name = "Destroy UI",
-    Callback = function()
-        OrionLib:Destroy()
-        FOVCircle:Remove()
-        for _, highlight in pairs(ESP_Objects) do
-            highlight:Destroy()
-        end
-        if SelfHighlight then
-            SelfHighlight:Destroy()
-        end
-        for _, lines in pairs(Skeletons) do
-            for _, line in pairs(lines) do
-                line:Remove()
-            end
-        end
-    end
-})
-
-OrionLib:Init()
+-- Auto-load config on startup
+task.spawn(function()
+    task.wait(1.5)
+    pcall(function()
+        Rayfield:LoadConfiguration()
+    end)
+end)
