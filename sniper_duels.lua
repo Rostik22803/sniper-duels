@@ -1,6 +1,6 @@
 --[[
     ====================================================================
-    OCEL HUB - SNIPER DUELS [360° RAGEBOT + ZERO VISUAL RECOIL]
+    OCEL HUB - SNIPER DUELS [360° RAGEBOT + SYNTAX FIXED & ALL EXECUTORS]
     ====================================================================
     Game: SNIPER DUELS (https://www.roblox.com/games/109397169461300/SNIPER-DUELS)
     Toggle Menu Key: [RightShift]
@@ -27,20 +27,20 @@ end)
 
 -- Config Flags
 local Flags = {
-    AntiBanMode = false, -- Disabled for full 360 Ragebot performance
+    AntiBanMode = false,
 
     RageEnabled = false,
     SilentAim = false,
-    Rage360Mode = true, -- 360° Target Lock (Shoots enemies even when looking at floor/away)
+    Rage360Mode = true,
     AimTarget = "Head",
-    AimPriority = "Distance", -- "Crosshair", "Distance", "LowestHP"
+    AimPriority = "Distance",
     FOVRadius = 360,
     ShowFOV = true,
     FOVPosition = "Center",
     FOVColor = Color3.fromRGB(0, 162, 255),
     Prediction = true,
     PredictionFactor = 0.125,
-    AutoFire = false, -- Instant Auto-Shoot when enemy is targetable
+    AutoFire = false,
     WallCheck = true,
     TeamCheck = true,
     SmartHitbox = true,
@@ -80,8 +80,8 @@ local Flags = {
     Noclip = false,
 
     HitSound = "Neverlose",
-    NoRecoil = true,        -- Camera & ViewModel No Recoil
-    NoSpread = true,        -- Perfect Bullet Straight Line
+    NoRecoil = true,
+    NoSpread = true,
     FOVChanger = false,
     FOVValue = 90,
     ThirdPerson = false,
@@ -199,13 +199,11 @@ local function GetFOVCenterPos()
     end
 end
 
--- 360° Target Selector (Target enemies even when looking at the floor or away)
 local function GetBestTarget()
     local fovPos = GetFOVCenterPos()
     local bestTarget, bestPart = nil, nil
     local minScore = math.huge
     local camPos = Camera.CFrame.Position
-    local camLook = Camera.CFrame.LookVector
 
     for _, player in ipairs(Players:GetPlayers()) do
         if player ~= LocalPlayer and IsEnemy(player) and IsAlive(player) then
@@ -240,7 +238,6 @@ local function GetBestTarget()
                     local screenPos, onScreen = Camera:WorldToViewportPoint(worldPos)
                     local distToFOV = (Vector2.new(screenPos.X, screenPos.Y) - fovPos).Magnitude
 
-                    -- 360° Rage Mode: bypass onScreen check if looking down/away!
                     if Flags.Rage360Mode or (onScreen and distToFOV <= Flags.FOVRadius) then
                         if IsVisible(camPos, targetPart, char) then
                             local distWorld = (worldPos - camPos).Magnitude
@@ -261,7 +258,6 @@ local function GetBestTarget()
     return bestTarget, bestPart
 end
 
--- Render Stepped Ragebot & Auto-Fire Loop
 local autoFireCooldown = false
 RunService.RenderStepped:Connect(function()
     if FOVCircle then
@@ -274,11 +270,9 @@ RunService.RenderStepped:Connect(function()
     if Flags.RageEnabled then
         RageTarget, RagePart = GetBestTarget()
 
-        -- Auto-Fire / Triggerbot Engine
         if Flags.AutoFire and RageTarget and RagePart and not autoFireCooldown then
             autoFireCooldown = true
             task.spawn(function()
-                -- Trigger Mouse Click via VirtualInputManager or Local Tool
                 local char = GetCharacter()
                 local tool = char and char:FindFirstChildOfClass("Tool")
                 if tool then
@@ -297,18 +291,15 @@ RunService.RenderStepped:Connect(function()
     end
 end)
 
--- ZERO VISUAL RECOIL & CAMERA STABILIZER
-local baseCamRot = Camera.CFrame.Rotation
+-- ZERO VISUAL RECOIL
 RunService.RenderStepped:Connect(function()
     local char = GetCharacter()
     if not char then return end
 
     if Flags.NoRecoil then
-        -- 1. Reset Humanoid Camera Offset
         local hum = char:FindFirstChildOfClass("Humanoid")
         if hum then hum.CameraOffset = Vector3.zero end
 
-        -- 2. Strip Visual Recoil & ViewModel Shake in active tools
         for _, tool in ipairs(char:GetChildren()) do
             if tool:IsA("Tool") then
                 for _, obj in ipairs(tool:GetDescendants()) do
@@ -324,14 +315,13 @@ RunService.RenderStepped:Connect(function()
     end
 end)
 
--- METATABLE HOOKS FOR 360° SILENT AIM & PERFECT NO SPREAD
+-- METATABLE HOOKS
 if hookmetamethod then
     local oldNamecall
     oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
         local method = getnamecallmethod()
         local args = {...}
 
-        -- A. Silent Aim Target Redirection (Works even if looking at floor / 360°)
         if Flags.RageEnabled and Flags.SilentAim and RagePart and PredictedPos then
             local camPos = Camera.CFrame.Position
             local aimDir = (PredictedPos - camPos).Unit * 5000
@@ -369,7 +359,6 @@ if hookmetamethod then
                 return oldNamecall(self, unpack(args))
             end
         
-        -- B. No Spread Active
         elseif Flags.NoSpread then
             local straightDir = Camera.CFrame.LookVector * 5000
 
@@ -408,7 +397,7 @@ local spinAngle = 0
 local jitterToggle = false
 
 UserInputService.InputBegan:Connect(function(input, gpe)
-    if gpe transatlantic then return end
+    if gpe then return end
     if input.KeyCode == Enum.KeyCode.Z then Flags.ManualDir = "Left" end
     if input.KeyCode == Enum.KeyCode.X then Flags.ManualDir = "Back" end
     if input.KeyCode == Enum.KeyCode.C then Flags.ManualDir = "Right" end
@@ -730,8 +719,26 @@ RunService.RenderStepped:Connect(function()
     end
 end)
 
--- GUI
-local parentTarget = (gethui and gethui()) or (syn and syn.protect_gui and CoreGui) or CoreGui or LocalPlayer:WaitForChild("PlayerGui")
+-- FAILSAFE GUI PARENT SELECTION
+local parentTarget = nil
+pcall(function()
+    if gethui then parentTarget = gethui() end
+end)
+if not parentTarget then
+    pcall(function()
+        if syn and syn.protect_gui then
+            syn.protect_gui(CoreGui)
+            parentTarget = CoreGui
+        end
+    end)
+end
+if not parentTarget then
+    pcall(function() parentTarget = CoreGui end)
+end
+if not parentTarget then
+    parentTarget = LocalPlayer:WaitForChild("PlayerGui")
+end
+
 if parentTarget:FindFirstChild("OcelHubGui") then parentTarget.OcelHubGui:Destroy() end
 
 local ScreenGui = Instance.new("ScreenGui")
@@ -771,7 +778,7 @@ HeaderCorner.CornerRadius = UDim.new(0, 8)
 HeaderCorner.Parent = Header
 
 local Title = Instance.new("TextLabel")
-Title.Text = "<b>OCEL HUB</b> <font color=\"#00aaff\">| SNIPER DUELS [360° Rage Client]</font>"
+Title.Text = "<b>OCEL HUB</b> <font color=\"#00aaff\">| SNIPER DUELS [HvH Client]</font>"
 Title.RichText = true
 Title.Size = UDim2.new(0, 400, 1, 0)
 Title.Position = UDim2.new(0, 15, 0, 0)
@@ -1265,4 +1272,4 @@ UserInputService.InputBegan:Connect(function(input, gpe)
     end
 end)
 
-print("[OcelHub] 360° HvH Ragebot & Zero Visual Recoil Loaded!")
+print("[OcelHub] Syntax Fixed & Failsafe Execution Ready!")
