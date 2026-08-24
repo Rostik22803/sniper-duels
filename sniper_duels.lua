@@ -1,6 +1,6 @@
 --[[
     ====================================================================
-    OCEL HUB - SNIPER DUELS [HvH Client] (100% WORKING SILENT AIM & 3RD PERSON)
+    OCEL HUB - SNIPER DUELS [360° RAGEBOT + ZERO VISUAL RECOIL]
     ====================================================================
     Game: SNIPER DUELS (https://www.roblox.com/games/109397169461300/SNIPER-DUELS)
     Toggle Menu Key: [RightShift]
@@ -15,6 +15,7 @@ local Workspace = game:GetService("Workspace")
 local HttpService = game:GetService("HttpService")
 local CoreGui = game:GetService("CoreGui")
 local SoundService = game:GetService("SoundService")
+local VirtualInputManager = game:GetService("VirtualInputManager")
 
 local LocalPlayer = Players.LocalPlayer
 local Mouse = LocalPlayer and LocalPlayer:GetMouse()
@@ -26,26 +27,30 @@ end)
 
 -- Config Flags
 local Flags = {
+    AntiBanMode = false, -- Disabled for full 360 Ragebot performance
+
     RageEnabled = false,
     SilentAim = false,
-    AimTarget = "Head", -- "Head", "UpperTorso", "HumanoidRootPart", "Smart"
-    AimPriority = "Crosshair",
-    FOVRadius = 180,
+    Rage360Mode = true, -- 360° Target Lock (Shoots enemies even when looking at floor/away)
+    AimTarget = "Head",
+    AimPriority = "Distance", -- "Crosshair", "Distance", "LowestHP"
+    FOVRadius = 360,
     ShowFOV = true,
-    FOVPosition = "Center", -- "Center" or "Mouse"
+    FOVPosition = "Center",
     FOVColor = Color3.fromRGB(0, 162, 255),
     Prediction = true,
-    PredictionFactor = 0.135,
-    AutoFire = false,
+    PredictionFactor = 0.125,
+    AutoFire = false, -- Instant Auto-Shoot when enemy is targetable
     WallCheck = true,
     TeamCheck = true,
-    SmartHitbox = true, -- Fallback to Torso if Head behind wall
+    SmartHitbox = true,
+    MaxSilentAngle = 180,
 
     AAEnabled = false,
     PitchMode = "Emotionless",
     YawMode = "Spinbot",
-    SpinSpeed = 25,
-    JitterRange = 45,
+    SpinSpeed = 35,
+    JitterRange = 90,
     ManualDir = "Back",
     DesyncEnabled = false,
     DesyncMode = "Velocity",
@@ -75,7 +80,8 @@ local Flags = {
     Noclip = false,
 
     HitSound = "Neverlose",
-    NoRecoil = false,
+    NoRecoil = true,        -- Camera & ViewModel No Recoil
+    NoSpread = true,        -- Perfect Bullet Straight Line
     FOVChanger = false,
     FOVValue = 90,
     ThirdPerson = false,
@@ -159,7 +165,7 @@ local function IsEnemy(player)
     return player.Team ~= LocalPlayer.Team
 end
 
--- RAGEBOT / SILENT AIM MODULE
+-- RAGEBOT / 360° SILENT AIM MODULE
 local RageTarget = nil
 local RagePart = nil
 local PredictedPos = nil
@@ -193,18 +199,18 @@ local function GetFOVCenterPos()
     end
 end
 
--- Robust Target Selection with Smart Hitbox Fallback
+-- 360° Target Selector (Target enemies even when looking at the floor or away)
 local function GetBestTarget()
     local fovPos = GetFOVCenterPos()
     local bestTarget, bestPart = nil, nil
     local minScore = math.huge
     local camPos = Camera.CFrame.Position
+    local camLook = Camera.CFrame.LookVector
 
     for _, player in ipairs(Players:GetPlayers()) do
         if player ~= LocalPlayer and IsEnemy(player) and IsAlive(player) then
             local char = player.Character
             
-            -- List candidate hitboxes in priority order
             local candidateParts = {}
             if Flags.AimTarget == "Head" then
                 table.insert(candidateParts, char:FindFirstChild("Head"))
@@ -230,20 +236,22 @@ local function GetBestTarget()
                         local vel = targetPart.AssemblyLinearVelocity or targetPart.Velocity or Vector3.zero
                         worldPos = worldPos + (vel * Flags.PredictionFactor)
                     end
+
                     local screenPos, onScreen = Camera:WorldToViewportPoint(worldPos)
-                    if onScreen then
-                        local distToFOV = (Vector2.new(screenPos.X, screenPos.Y) - fovPos).Magnitude
-                        if distToFOV <= Flags.FOVRadius then
-                            if IsVisible(camPos, targetPart, char) then
-                                local score = (Flags.AimPriority == "Crosshair" and distToFOV) or (Flags.AimPriority == "Distance" and (worldPos - camPos).Magnitude) or 0
-                                if score < minScore then
-                                    minScore = score
-                                    bestTarget = player
-                                    bestPart = targetPart
-                                    PredictedPos = worldPos
-                                end
-                                break -- Found best visible hitbox for this player
+                    local distToFOV = (Vector2.new(screenPos.X, screenPos.Y) - fovPos).Magnitude
+
+                    -- 360° Rage Mode: bypass onScreen check if looking down/away!
+                    if Flags.Rage360Mode or (onScreen and distToFOV <= Flags.FOVRadius) then
+                        if IsVisible(camPos, targetPart, char) then
+                            local distWorld = (worldPos - camPos).Magnitude
+                            local score = (Flags.AimPriority == "Distance" and distWorld) or (Flags.AimPriority == "Crosshair" and distToFOV) or 0
+                            if score < minScore then
+                                minScore = score
+                                bestTarget = player
+                                bestPart = targetPart
+                                PredictedPos = worldPos
                             end
+                            break
                         end
                     end
                 end
@@ -253,6 +261,8 @@ local function GetBestTarget()
     return bestTarget, bestPart
 end
 
+-- Render Stepped Ragebot & Auto-Fire Loop
+local autoFireCooldown = false
 RunService.RenderStepped:Connect(function()
     if FOVCircle then
         FOVCircle.Position = GetFOVCenterPos()
@@ -260,64 +270,128 @@ RunService.RenderStepped:Connect(function()
         FOVCircle.Color = Flags.FOVColor
         FOVCircle.Visible = Flags.RageEnabled and Flags.ShowFOV
     end
+
     if Flags.RageEnabled then
         RageTarget, RagePart = GetBestTarget()
+
+        -- Auto-Fire / Triggerbot Engine
+        if Flags.AutoFire and RageTarget and RagePart and not autoFireCooldown then
+            autoFireCooldown = true
+            task.spawn(function()
+                -- Trigger Mouse Click via VirtualInputManager or Local Tool
+                local char = GetCharacter()
+                local tool = char and char:FindFirstChildOfClass("Tool")
+                if tool then
+                    tool:Activate()
+                else
+                    VirtualInputManager:SendMouseButtonEvent(0, 0, 0, true, game, 0)
+                    task.wait(0.05)
+                    VirtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game, 0)
+                end
+                task.wait(0.1)
+                autoFireCooldown = false
+            end)
+        end
     else
         RageTarget, RagePart, PredictedPos = nil, nil, nil
     end
 end)
 
--- BULLETPROOF METATABLE HOOKS FOR SILENT AIM
+-- ZERO VISUAL RECOIL & CAMERA STABILIZER
+local baseCamRot = Camera.CFrame.Rotation
+RunService.RenderStepped:Connect(function()
+    local char = GetCharacter()
+    if not char then return end
+
+    if Flags.NoRecoil then
+        -- 1. Reset Humanoid Camera Offset
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if hum then hum.CameraOffset = Vector3.zero end
+
+        -- 2. Strip Visual Recoil & ViewModel Shake in active tools
+        for _, tool in ipairs(char:GetChildren()) do
+            if tool:IsA("Tool") then
+                for _, obj in ipairs(tool:GetDescendants()) do
+                    if obj:IsA("NumberValue") or obj:IsA("IntValue") then
+                        local name = string.lower(obj.Name)
+                        if string.find(name, "recoil") or string.find(name, "kick") or string.find(name, "spread") or string.find(name, "shake") or string.find(name, "sway") then
+                            obj.Value = 0
+                        end
+                    end
+                end
+            end
+        end
+    end
+end)
+
+-- METATABLE HOOKS FOR 360° SILENT AIM & PERFECT NO SPREAD
 if hookmetamethod then
     local oldNamecall
     oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
         local method = getnamecallmethod()
         local args = {...}
 
+        -- A. Silent Aim Target Redirection (Works even if looking at floor / 360°)
         if Flags.RageEnabled and Flags.SilentAim and RagePart and PredictedPos then
-            -- 1. Hook Raycast
+            local camPos = Camera.CFrame.Position
+            local aimDir = (PredictedPos - camPos).Unit * 5000
+
             if method == "Raycast" and self == Workspace then
                 if args[1] then
-                    args[2] = (PredictedPos - args[1]).Unit * 5000
+                    args[2] = aimDir
                     return oldNamecall(self, unpack(args))
                 end
             end
 
-            -- 2. Hook FindPartOnRay variants
             if (method == "FindPartOnRay" or method == "FindPartOnRayWithIgnoreList" or method == "FindPartOnRayWithWhitelist") and self == Workspace then
                 local ray = args[1]
                 if ray then
-                    args[1] = Ray.new(ray.Origin, (PredictedPos - ray.Origin).Unit * 5000)
+                    args[1] = Ray.new(ray.Origin, aimDir)
                     return oldNamecall(self, unpack(args))
                 end
             end
 
-            -- 3. Intercept RemoteEvent FireServer / InvokeServer calls for bullet trajectory
             if method == "FireServer" or method == "InvokeServer" then
-                local camPos = Camera.CFrame.Position
                 for i, arg in ipairs(args) do
                     if typeof(arg) == "Vector3" then
-                        -- Check if vector is bullet direction or hit target
                         local dirToMouse = (arg - Mouse.Hit.Position).Magnitude
-                        if dirToMouse < 20 or (arg - Camera.CFrame.LookVector).Magnitude < 2 then
+                        if dirToMouse < 40 or (arg - Camera.CFrame.LookVector).Magnitude < 2 then
                             args[i] = (PredictedPos - camPos).Unit
-                        elseif (arg - Mouse.Hit.Position).Magnitude < 100 then
+                        elseif (arg - Mouse.Hit.Position).Magnitude < 150 then
                             args[i] = PredictedPos
                         end
                     elseif typeof(arg) == "CFrame" then
                         args[i] = CFrame.new(arg.Position, PredictedPos)
                     elseif typeof(arg) == "Ray" then
-                        args[i] = Ray.new(arg.Origin, (PredictedPos - arg.Origin).Unit * 5000)
+                        args[i] = Ray.new(arg.Origin, aimDir)
                     end
                 end
                 return oldNamecall(self, unpack(args))
+            end
+        
+        -- B. No Spread Active
+        elseif Flags.NoSpread then
+            local straightDir = Camera.CFrame.LookVector * 5000
+
+            if method == "Raycast" and self == Workspace then
+                if args[1] then
+                    args[2] = straightDir
+                    return oldNamecall(self, unpack(args))
+                end
+            end
+
+            if (method == "FindPartOnRay" or method == "FindPartOnRayWithIgnoreList") and self == Workspace then
+                local ray = args[1]
+                if ray then
+                    args[1] = Ray.new(ray.Origin, straightDir)
+                    return oldNamecall(self, unpack(args))
+                end
             end
         end
 
         return oldNamecall(self, ...)
     end)
 
-    -- Hook Mouse Index
     local oldIndex
     oldIndex = hookmetamethod(game, "__index", function(self, key)
         if Flags.RageEnabled and Flags.SilentAim and RagePart and PredictedPos and self == Mouse then
@@ -334,7 +408,7 @@ local spinAngle = 0
 local jitterToggle = false
 
 UserInputService.InputBegan:Connect(function(input, gpe)
-    if gpe then return end
+    if gpe transatlantic then return end
     if input.KeyCode == Enum.KeyCode.Z then Flags.ManualDir = "Left" end
     if input.KeyCode == Enum.KeyCode.X then Flags.ManualDir = "Back" end
     if input.KeyCode == Enum.KeyCode.C then Flags.ManualDir = "Right" end
@@ -349,11 +423,13 @@ RunService.Heartbeat:Connect(function(dt)
     hum.AutoRotate = false
     local pitchRad, yawRad = 0, 0
 
-    if Flags.PitchMode == "Emotionless" then pitchRad = math.rad(-89)
-    elseif Flags.PitchMode == "Up" then pitchRad = math.rad(89)
+    if Flags.PitchMode == "Emotionless" then
+        pitchRad = math.rad(Flags.AntiBanMode and -75 or -89)
+    elseif Flags.PitchMode == "Up" then
+        pitchRad = math.rad(Flags.AntiBanMode and 75 or 89)
     elseif Flags.PitchMode == "Jitter" then
         jitterToggle = not jitterToggle
-        pitchRad = math.rad(jitterToggle and -89 or 89)
+        pitchRad = math.rad(jitterToggle and -75 or 75)
     end
 
     if Flags.YawMode == "Spinbot" then
@@ -377,11 +453,12 @@ RunService.Heartbeat:Connect(function(dt)
 
     if Flags.DesyncEnabled then
         local oldVel = root.AssemblyLinearVelocity or root.Velocity
-        root.AssemblyLinearVelocity = Vector3.new(math.random(-100, 100) * 10, oldVel.Y, math.random(-100, 100) * 10)
+        local desyncMax = Flags.AntiBanMode and 80 or 1000
+        root.AssemblyLinearVelocity = Vector3.new(math.random(-desyncMax, desyncMax), oldVel.Y, math.random(-desyncMax, desyncMax))
     end
 end)
 
--- VISUALS MODULE (2D BOX, HEALTHBAR, SKELETON, CHAMS)
+-- VISUALS MODULE
 local ESPObjects = {}
 local ChamsObjects = {}
 
@@ -597,7 +674,7 @@ RunService.RenderStepped:Connect(function()
     end
 end)
 
--- MOVEMENT & CAMERA MODULE
+-- MOVEMENT
 RunService.Heartbeat:Connect(function()
     if Flags.BHop and IsAlive() then
         local hum = GetHumanoid()
@@ -610,7 +687,10 @@ end)
 RunService.Stepped:Connect(function()
     if not IsAlive() then return end
     local hum = GetHumanoid()
-    if hum and Flags.SpeedHack then hum.WalkSpeed = Flags.SpeedValue end
+    if hum and Flags.SpeedHack then
+        local maxSpeed = Flags.AntiBanMode and 32 or Flags.SpeedValue
+        hum.WalkSpeed = math.min(Flags.SpeedValue, maxSpeed)
+    end
     if Flags.Noclip then
         for _, part in ipairs(GetCharacter():GetDescendants()) do
             if part:IsA("BasePart") then part.CanCollide = false end
@@ -618,7 +698,7 @@ RunService.Stepped:Connect(function()
     end
 end)
 
--- 100% BULLETPROOF THIRD PERSON & FOV ENGINE
+-- THIRD PERSON ENGINE
 RunService.RenderStepped:Connect(function()
     if Flags.FOVChanger and Camera then
         Camera.FieldOfView = Flags.FOVValue
@@ -636,7 +716,6 @@ RunService.RenderStepped:Connect(function()
             local headPos = root.Position + Vector3.new(0, 2.5, 0)
             local desiredPos = headPos - (lookVector * Flags.ThirdPersonDist)
 
-            -- Prevent camera from clipping through obstacles
             local rayParams = RaycastParams.new()
             rayParams.FilterType = Enum.RaycastFilterType.Exclude
             rayParams.FilterDescendantsInstances = {GetCharacter()}
@@ -651,9 +730,7 @@ RunService.RenderStepped:Connect(function()
     end
 end)
 
--- ====================================================================
--- CUSTOM NEVERLOSE / FATALITY GUI
--- ====================================================================
+-- GUI
 local parentTarget = (gethui and gethui()) or (syn and syn.protect_gui and CoreGui) or CoreGui or LocalPlayer:WaitForChild("PlayerGui")
 if parentTarget:FindFirstChild("OcelHubGui") then parentTarget.OcelHubGui:Destroy() end
 
@@ -694,9 +771,9 @@ HeaderCorner.CornerRadius = UDim.new(0, 8)
 HeaderCorner.Parent = Header
 
 local Title = Instance.new("TextLabel")
-Title.Text = "<b>OCEL HUB</b> <font color=\"#00aaff\">| SNIPER DUELS [HvH Client]</font>"
+Title.Text = "<b>OCEL HUB</b> <font color=\"#00aaff\">| SNIPER DUELS [360° Rage Client]</font>"
 Title.RichText = true
-Title.Size = UDim2.new(0, 350, 1, 0)
+Title.Size = UDim2.new(0, 400, 1, 0)
 Title.Position = UDim2.new(0, 15, 0, 0)
 Title.BackgroundTransparency = 1
 Title.TextColor3 = Color3.fromRGB(240, 240, 245)
@@ -771,7 +848,6 @@ OpenBtn.MouseButton1Click:Connect(function()
     OpenBtn.Visible = false
 end)
 
--- Dragging
 local isDragging = false
 local dragStartPos = Vector2.zero
 local frameStartPos = UDim2.new()
@@ -803,7 +879,6 @@ UserInputService.InputEnded:Connect(function(input)
     end
 end)
 
--- Sidebar & Content
 local Sidebar = Instance.new("Frame")
 Sidebar.Size = UDim2.new(0, 160, 1, -45)
 Sidebar.Position = UDim2.new(0, 0, 0, 45)
@@ -1122,9 +1197,11 @@ end
 local Rage = CreateTab("Ragebot", "🎯")
 Rage:AddToggle("Enable Ragebot", "RageEnabled")
 Rage:AddToggle("Silent Aim", "SilentAim")
+Rage:AddToggle("360° Target Lock (Shoot Floor/Away)", "Rage360Mode")
+Rage:AddToggle("Auto-Fire (Instant Auto Shoot)", "AutoFire")
 Rage:AddDropdown("Target Hitbox", "AimTarget", {"Head", "UpperTorso", "HumanoidRootPart"})
 Rage:AddToggle("Smart Hitbox Fallback", "SmartHitbox")
-Rage:AddDropdown("Target Priority", "AimPriority", {"Crosshair", "Distance", "LowestHP"})
+Rage:AddDropdown("Target Priority", "AimPriority", {"Distance", "Crosshair", "LowestHP"})
 Rage:AddToggle("Velocity Prediction", "Prediction")
 Rage:AddSlider("Prediction Factor", "PredictionFactor", 0, 1)
 Rage:AddToggle("Show FOV Circle", "ShowFOV")
@@ -1140,6 +1217,10 @@ AA:AddDropdown("Yaw Mode", "YawMode", {"Spinbot", "Jitter", "Backward", "Manual"
 AA:AddSlider("Spinbot Speed", "SpinSpeed", 5, 100)
 AA:AddSlider("Jitter Range", "JitterRange", 10, 180)
 AA:AddToggle("Desync Simulation", "DesyncEnabled")
+
+local AntiBanTab = CreateTab("Anti-Ban Shield", "🛡️")
+AntiBanTab:AddToggle("Anti-Ban Safe Mode", "AntiBanMode")
+AntiBanTab:AddSlider("Max Silent Aim Angle", "MaxSilentAngle", 15, 180)
 
 local Vis = CreateTab("Visuals", "👁️")
 Vis:AddToggle("Master ESP Enable", "ESPEnabled")
@@ -1162,7 +1243,8 @@ Mov:AddToggle("Noclip", "Noclip")
 
 local MiscTab = CreateTab("Misc & Config", "⚙️")
 MiscTab:AddDropdown("Hit Sound", "HitSound", {"None", "Neverlose", "Skeet", "Rust", "Roblox"})
-MiscTab:AddToggle("Camera No Recoil", "NoRecoil")
+MiscTab:AddToggle("Camera & ViewModel No Recoil", "NoRecoil")
+MiscTab:AddToggle("Perfect Bullet No Spread", "NoSpread")
 MiscTab:AddToggle("FOV Changer", "FOVChanger")
 MiscTab:AddSlider("Field of View", "FOVValue", 70, 120)
 MiscTab:AddToggle("Third Person Camera", "ThirdPerson")
@@ -1183,4 +1265,4 @@ UserInputService.InputBegan:Connect(function(input, gpe)
     end
 end)
 
-print("[OcelHub] Fixed Silent Aim & Third Person Loaded!")
+print("[OcelHub] 360° HvH Ragebot & Zero Visual Recoil Loaded!")
