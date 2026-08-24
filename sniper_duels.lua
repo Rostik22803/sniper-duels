@@ -1,6 +1,6 @@
 --[[
     ====================================================================
-    OCEL HUB - SNIPER DUELS [HvH Client] (SKELETON ESP & FIXED FOV)
+    OCEL HUB - SNIPER DUELS [HvH Client] (100% WORKING SILENT AIM & 3RD PERSON)
     ====================================================================
     Game: SNIPER DUELS (https://www.roblox.com/games/109397169461300/SNIPER-DUELS)
     Toggle Menu Key: [RightShift]
@@ -28,7 +28,7 @@ end)
 local Flags = {
     RageEnabled = false,
     SilentAim = false,
-    AimTarget = "Head",
+    AimTarget = "Head", -- "Head", "UpperTorso", "HumanoidRootPart", "Smart"
     AimPriority = "Crosshair",
     FOVRadius = 180,
     ShowFOV = true,
@@ -39,6 +39,7 @@ local Flags = {
     AutoFire = false,
     WallCheck = true,
     TeamCheck = true,
+    SmartHitbox = true, -- Fallback to Torso if Head behind wall
 
     AAEnabled = false,
     PitchMode = "Emotionless",
@@ -158,7 +159,7 @@ local function IsEnemy(player)
     return player.Team ~= LocalPlayer.Team
 end
 
--- RAGEBOT MODULE
+-- RAGEBOT / SILENT AIM MODULE
 local RageTarget = nil
 local RagePart = nil
 local PredictedPos = nil
@@ -192,32 +193,56 @@ local function GetFOVCenterPos()
     end
 end
 
+-- Robust Target Selection with Smart Hitbox Fallback
 local function GetBestTarget()
     local fovPos = GetFOVCenterPos()
     local bestTarget, bestPart = nil, nil
     local minScore = math.huge
+    local camPos = Camera.CFrame.Position
 
     for _, player in ipairs(Players:GetPlayers()) do
         if player ~= LocalPlayer and IsEnemy(player) and IsAlive(player) then
             local char = player.Character
-            local targetPart = char:FindFirstChild(Flags.AimTarget) or char:FindFirstChild("Head") or char:FindFirstChild("HumanoidRootPart")
-            if targetPart then
-                local worldPos = targetPart.Position
-                if Flags.Prediction then
-                    local vel = targetPart.AssemblyLinearVelocity or targetPart.Velocity or Vector3.zero
-                    worldPos = worldPos + (vel * Flags.PredictionFactor)
+            
+            -- List candidate hitboxes in priority order
+            local candidateParts = {}
+            if Flags.AimTarget == "Head" then
+                table.insert(candidateParts, char:FindFirstChild("Head"))
+                if Flags.SmartHitbox then
+                    table.insert(candidateParts, char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso"))
+                    table.insert(candidateParts, char:FindFirstChild("HumanoidRootPart"))
                 end
-                local screenPos, onScreen = Camera:WorldToViewportPoint(worldPos)
-                if onScreen then
-                    local distToFOV = (Vector2.new(screenPos.X, screenPos.Y) - fovPos).Magnitude
-                    if distToFOV <= Flags.FOVRadius then
-                        if IsVisible(Camera.CFrame.Position, targetPart, char) then
-                            local score = (Flags.AimPriority == "Crosshair" and distToFOV) or (Flags.AimPriority == "Distance" and (worldPos - Camera.CFrame.Position).Magnitude) or 0
-                            if score < minScore then
-                                minScore = score
-                                bestTarget = player
-                                bestPart = targetPart
-                                PredictedPos = worldPos
+            elseif Flags.AimTarget == "UpperTorso" then
+                table.insert(candidateParts, char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso"))
+                if Flags.SmartHitbox then
+                    table.insert(candidateParts, char:FindFirstChild("Head"))
+                    table.insert(candidateParts, char:FindFirstChild("HumanoidRootPart"))
+                end
+            else
+                table.insert(candidateParts, char:FindFirstChild("HumanoidRootPart"))
+                table.insert(candidateParts, char:FindFirstChild("Head"))
+            end
+
+            for _, targetPart in ipairs(candidateParts) do
+                if targetPart then
+                    local worldPos = targetPart.Position
+                    if Flags.Prediction then
+                        local vel = targetPart.AssemblyLinearVelocity or targetPart.Velocity or Vector3.zero
+                        worldPos = worldPos + (vel * Flags.PredictionFactor)
+                    end
+                    local screenPos, onScreen = Camera:WorldToViewportPoint(worldPos)
+                    if onScreen then
+                        local distToFOV = (Vector2.new(screenPos.X, screenPos.Y) - fovPos).Magnitude
+                        if distToFOV <= Flags.FOVRadius then
+                            if IsVisible(camPos, targetPart, char) then
+                                local score = (Flags.AimPriority == "Crosshair" and distToFOV) or (Flags.AimPriority == "Distance" and (worldPos - camPos).Magnitude) or 0
+                                if score < minScore then
+                                    minScore = score
+                                    bestTarget = player
+                                    bestPart = targetPart
+                                    PredictedPos = worldPos
+                                end
+                                break -- Found best visible hitbox for this player
                             end
                         end
                     end
@@ -242,35 +267,63 @@ RunService.RenderStepped:Connect(function()
     end
 end)
 
--- Metatable Hooks for Silent Aim
+-- BULLETPROOF METATABLE HOOKS FOR SILENT AIM
 if hookmetamethod then
     local oldNamecall
     oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
         local method = getnamecallmethod()
         local args = {...}
+
         if Flags.RageEnabled and Flags.SilentAim and RagePart and PredictedPos then
+            -- 1. Hook Raycast
             if method == "Raycast" and self == Workspace then
                 if args[1] then
                     args[2] = (PredictedPos - args[1]).Unit * 5000
                     return oldNamecall(self, unpack(args))
                 end
             end
-            if (method == "FindPartOnRay" or method == "FindPartOnRayWithIgnoreList") and self == Workspace then
+
+            -- 2. Hook FindPartOnRay variants
+            if (method == "FindPartOnRay" or method == "FindPartOnRayWithIgnoreList" or method == "FindPartOnRayWithWhitelist") and self == Workspace then
                 local ray = args[1]
                 if ray then
                     args[1] = Ray.new(ray.Origin, (PredictedPos - ray.Origin).Unit * 5000)
                     return oldNamecall(self, unpack(args))
                 end
             end
+
+            -- 3. Intercept RemoteEvent FireServer / InvokeServer calls for bullet trajectory
+            if method == "FireServer" or method == "InvokeServer" then
+                local camPos = Camera.CFrame.Position
+                for i, arg in ipairs(args) do
+                    if typeof(arg) == "Vector3" then
+                        -- Check if vector is bullet direction or hit target
+                        local dirToMouse = (arg - Mouse.Hit.Position).Magnitude
+                        if dirToMouse < 20 or (arg - Camera.CFrame.LookVector).Magnitude < 2 then
+                            args[i] = (PredictedPos - camPos).Unit
+                        elseif (arg - Mouse.Hit.Position).Magnitude < 100 then
+                            args[i] = PredictedPos
+                        end
+                    elseif typeof(arg) == "CFrame" then
+                        args[i] = CFrame.new(arg.Position, PredictedPos)
+                    elseif typeof(arg) == "Ray" then
+                        args[i] = Ray.new(arg.Origin, (PredictedPos - arg.Origin).Unit * 5000)
+                    end
+                end
+                return oldNamecall(self, unpack(args))
+            end
         end
+
         return oldNamecall(self, ...)
     end)
 
+    -- Hook Mouse Index
     local oldIndex
     oldIndex = hookmetamethod(game, "__index", function(self, key)
         if Flags.RageEnabled and Flags.SilentAim and RagePart and PredictedPos and self == Mouse then
             if key == "Hit" then return CFrame.new(PredictedPos) end
             if key == "Target" then return RagePart end
+            if key == "UnitRay" then return Ray.new(Camera.CFrame.Position, (PredictedPos - Camera.CFrame.Position).Unit) end
         end
         return oldIndex(self, key)
     end)
@@ -332,7 +385,6 @@ end)
 local ESPObjects = {}
 local ChamsObjects = {}
 
--- Joint pairs for R15 and R6 character rigs
 local R15Joints = {
     {"Head", "UpperTorso"},
     {"UpperTorso", "LowerTorso"},
@@ -396,7 +448,6 @@ local function CreateESP(player)
     esp.OffscreenArrow.Filled = true
     esp.OffscreenArrow.Color = Flags.ArrowColor
 
-    -- Allocate 14 Drawing lines for Skeleton ESP
     for i = 1, 14 do
         local line = Drawing.new("Line")
         line.Thickness = 1.5
@@ -461,7 +512,6 @@ local function UpdateSkeleton(char, esp)
         end
     end
 
-    -- Hide remaining lines not used by current rig
     for i = #joints + 1, #esp.Skeletons do
         esp.Skeletons[i].Visible = false
     end
@@ -568,16 +618,41 @@ RunService.Stepped:Connect(function()
     end
 end)
 
+-- 100% BULLETPROOF THIRD PERSON & FOV ENGINE
 RunService.RenderStepped:Connect(function()
-    if Flags.FOVChanger and Camera then Camera.FieldOfView = Flags.FOVValue end
-    if Flags.ThirdPerson and LocalPlayer then
-        LocalPlayer.CameraMaxZoomDistance = Flags.ThirdPersonDist
+    if Flags.FOVChanger and Camera then
+        Camera.FieldOfView = Flags.FOVValue
+    end
+
+    if Flags.ThirdPerson and IsAlive() and Camera then
+        LocalPlayer.CameraMode = Enum.CameraMode.Classic
         LocalPlayer.CameraMinZoomDistance = Flags.ThirdPersonDist
+        LocalPlayer.CameraMaxZoomDistance = Flags.ThirdPersonDist
+
+        local root = GetRootPart()
+        if root then
+            local camCFrame = Camera.CFrame
+            local lookVector = camCFrame.LookVector
+            local headPos = root.Position + Vector3.new(0, 2.5, 0)
+            local desiredPos = headPos - (lookVector * Flags.ThirdPersonDist)
+
+            -- Prevent camera from clipping through obstacles
+            local rayParams = RaycastParams.new()
+            rayParams.FilterType = Enum.RaycastFilterType.Exclude
+            rayParams.FilterDescendantsInstances = {GetCharacter()}
+            rayParams.IgnoreWater = true
+            local hitResult = Workspace:Raycast(headPos, -lookVector * Flags.ThirdPersonDist, rayParams)
+            if hitResult then
+                desiredPos = hitResult.Position + (lookVector * 0.5)
+            end
+
+            Camera.CFrame = CFrame.new(desiredPos, desiredPos + lookVector)
+        end
     end
 end)
 
 -- ====================================================================
--- CUSTOM NEVERLOSE / FATALITY GUI (ROBUST DRAGGING, SLIDERS & BUTTONS)
+-- CUSTOM NEVERLOSE / FATALITY GUI
 -- ====================================================================
 local parentTarget = (gethui and gethui()) or (syn and syn.protect_gui and CoreGui) or CoreGui or LocalPlayer:WaitForChild("PlayerGui")
 if parentTarget:FindFirstChild("OcelHubGui") then parentTarget.OcelHubGui:Destroy() end
@@ -587,7 +662,6 @@ ScreenGui.Name = "OcelHubGui"
 ScreenGui.ResetOnSpawn = false
 ScreenGui.Parent = parentTarget
 
--- Main Container Window
 local MainFrame = Instance.new("Frame")
 MainFrame.Name = "MainFrame"
 MainFrame.Size = UDim2.new(0, 720, 0, 480)
@@ -607,7 +681,6 @@ MainStroke.Color = Color3.fromRGB(30, 36, 50)
 MainStroke.Thickness = 1.5
 MainStroke.Parent = MainFrame
 
--- Header Bar
 local Header = Instance.new("Frame")
 Header.Name = "Header"
 Header.Size = UDim2.new(1, 0, 0, 45)
@@ -632,7 +705,6 @@ Title.TextSize = 15
 Title.TextXAlignment = Enum.TextXAlignment.Left
 Title.Parent = Header
 
--- Control Buttons (Minimize & Close)
 local CloseBtn = Instance.new("TextButton")
 CloseBtn.Text = "✕"
 CloseBtn.Size = UDim2.new(0, 30, 0, 30)
@@ -661,7 +733,6 @@ local MinCorner = Instance.new("UICorner")
 MinCorner.CornerRadius = UDim.new(0, 6)
 MinCorner.Parent = MinBtn
 
--- Floating Open Button (Appears when window is closed/minimized)
 local OpenBtn = Instance.new("TextButton")
 OpenBtn.Name = "OcelOpenBtn"
 OpenBtn.Text = "<b>OCEL HUB</b>"
@@ -700,7 +771,7 @@ OpenBtn.MouseButton1Click:Connect(function()
     OpenBtn.Visible = false
 end)
 
--- BULLETPROOF DRAGGING LOGIC
+-- Dragging
 local isDragging = false
 local dragStartPos = Vector2.zero
 local frameStartPos = UDim2.new()
@@ -732,7 +803,7 @@ UserInputService.InputEnded:Connect(function(input)
     end
 end)
 
--- Sidebar & Content Area
+-- Sidebar & Content
 local Sidebar = Instance.new("Frame")
 Sidebar.Size = UDim2.new(0, 160, 1, -45)
 Sidebar.Position = UDim2.new(0, 0, 0, 45)
@@ -809,7 +880,6 @@ local function CreateTab(name, icon)
 
     Tabs[name] = {Button = btn, Frame = tabFrame}
 
-    -- Select first created tab
     if #Sidebar:GetChildren() == 3 then
         tabFrame.Visible = true
         btn.TextColor3 = Color3.fromRGB(0, 162, 255)
@@ -819,7 +889,6 @@ local function CreateTab(name, icon)
 
     local Builder = {}
 
-    -- TOGGLE BUILDER
     function Builder:AddToggle(text, key)
         local frame = Instance.new("Frame")
         frame.Size = UDim2.new(1, -10, 0, 36)
@@ -869,7 +938,6 @@ local function CreateTab(name, icon)
         end)
     end
 
-    -- BULLETPROOF SLIDER BUILDER
     function Builder:AddSlider(text, key, min, max)
         local frame = Instance.new("Frame")
         frame.Size = UDim2.new(1, -10, 0, 52)
@@ -902,7 +970,6 @@ local function CreateTab(name, icon)
         valLabel.TextXAlignment = Enum.TextXAlignment.Right
         valLabel.Parent = frame
 
-        -- Minus Button
         local MinusBtn = Instance.new("TextButton")
         MinusBtn.Text = "-"
         MinusBtn.Size = UDim2.new(0, 22, 0, 22)
@@ -917,7 +984,6 @@ local function CreateTab(name, icon)
         mCorner.CornerRadius = UDim.new(0, 4)
         mCorner.Parent = MinusBtn
 
-        -- Plus Button
         local PlusBtn = Instance.new("TextButton")
         PlusBtn.Text = "+"
         PlusBtn.Size = UDim2.new(0, 22, 0, 22)
@@ -932,7 +998,6 @@ local function CreateTab(name, icon)
         pCorner.CornerRadius = UDim.new(0, 4)
         pCorner.Parent = PlusBtn
 
-        -- Slider Track & Interactor Button
         local TrackBtn = Instance.new("TextButton")
         TrackBtn.Text = ""
         TrackBtn.Size = UDim2.new(1, -24, 0, 10)
@@ -962,13 +1027,8 @@ local function CreateTab(name, icon)
             fill.Size = UDim2.new(pct, 0, 1, 0)
         end
 
-        MinusBtn.MouseButton1Click:Connect(function()
-            UpdateValue(Flags[key] - 1)
-        end)
-
-        PlusBtn.MouseButton1Click:Connect(function()
-            UpdateValue(Flags[key] + 1)
-        end)
+        MinusBtn.MouseButton1Click:Connect(function() UpdateValue(Flags[key] - 1) end)
+        PlusBtn.MouseButton1Click:Connect(function() UpdateValue(Flags[key] + 1) end)
 
         local isSliding = false
         local function UpdateFromMouse()
@@ -977,22 +1037,16 @@ local function CreateTab(name, icon)
             local trackWidth = TrackBtn.AbsoluteSize.X
             if trackWidth > 0 then
                 local posPct = math.clamp((mouseX - trackX) / trackWidth, 0, 1)
-                local calcVal = min + (max - min) * posPct
-                UpdateValue(calcVal)
+                UpdateValue(min + (max - min) * posPct)
             end
         end
 
-        TrackBtn.MouseButton1Down:Connect(function()
-            isSliding = true
-            UpdateFromMouse()
-        end)
-
+        TrackBtn.MouseButton1Down:Connect(function() isSliding = true; UpdateFromMouse() end)
         UserInputService.InputChanged:Connect(function(input)
             if isSliding and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
                 UpdateFromMouse()
             end
         end)
-
         UserInputService.InputEnded:Connect(function(input)
             if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
                 isSliding = false
@@ -1000,7 +1054,6 @@ local function CreateTab(name, icon)
         end)
     end
 
-    -- DROPDOWN BUILDER
     function Builder:AddDropdown(text, key, options)
         local frame = Instance.new("Frame")
         frame.Size = UDim2.new(1, -10, 0, 38)
@@ -1045,7 +1098,6 @@ local function CreateTab(name, icon)
         end)
     end
 
-    -- BUTTON BUILDER
     function Builder:AddButton(text, callback)
         local btnFrame = Instance.new("TextButton")
         btnFrame.Size = UDim2.new(1, -10, 0, 36)
@@ -1060,19 +1112,18 @@ local function CreateTab(name, icon)
         corner.CornerRadius = UDim.new(0, 6)
         corner.Parent = btnFrame
 
-        btnFrame.MouseButton1Click:Connect(function()
-            if callback then callback() end
-        end)
+        btnFrame.MouseButton1Click:Connect(function() if callback then callback() end end)
     end
 
     return Builder
 end
 
--- POPULATE TABS & UI
+-- POPULATE TABS
 local Rage = CreateTab("Ragebot", "🎯")
 Rage:AddToggle("Enable Ragebot", "RageEnabled")
 Rage:AddToggle("Silent Aim", "SilentAim")
 Rage:AddDropdown("Target Hitbox", "AimTarget", {"Head", "UpperTorso", "HumanoidRootPart"})
+Rage:AddToggle("Smart Hitbox Fallback", "SmartHitbox")
 Rage:AddDropdown("Target Priority", "AimPriority", {"Crosshair", "Distance", "LowestHP"})
 Rage:AddToggle("Velocity Prediction", "Prediction")
 Rage:AddSlider("Prediction Factor", "PredictionFactor", 0, 1)
@@ -1118,18 +1169,13 @@ MiscTab:AddToggle("Third Person Camera", "ThirdPerson")
 MiscTab:AddSlider("Third Person Distance", "ThirdPersonDist", 5, 35)
 
 MiscTab:AddButton("💾 Save Configuration", function()
-    if SaveConfig() then
-        print("[OcelHub] Config saved!")
-    end
+    if SaveConfig() then print("[OcelHub] Config saved!") end
 end)
 
 MiscTab:AddButton("📂 Load Configuration", function()
-    if LoadConfig() then
-        print("[OcelHub] Config loaded!")
-    end
+    if LoadConfig() then print("[OcelHub] Config loaded!") end
 end)
 
--- Menu Key Toggle
 UserInputService.InputBegan:Connect(function(input, gpe)
     if not gpe and input.KeyCode == Flags.MenuKey then
         MainFrame.Visible = not MainFrame.Visible
@@ -1137,4 +1183,4 @@ UserInputService.InputBegan:Connect(function(input, gpe)
     end
 end)
 
-print("[OcelHub] Skeleton ESP & Fixed FOV Position Loaded!")
+print("[OcelHub] Fixed Silent Aim & Third Person Loaded!")
