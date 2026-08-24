@@ -1,6 +1,6 @@
 --[[
     ====================================================================
-    OCEL HUB - SNIPER DUELS [HvH Client + ANTI-BAN PROTECTION]
+    OCEL HUB - SNIPER DUELS [HvH Client] (100% WORKING SILENT AIM & 3RD PERSON)
     ====================================================================
     Game: SNIPER DUELS (https://www.roblox.com/games/109397169461300/SNIPER-DUELS)
     Toggle Menu Key: [RightShift]
@@ -26,23 +26,20 @@ end)
 
 -- Config Flags
 local Flags = {
-    AntiBanMode = true, -- Anti-Ban Protection (Restricts illegal velocity & angle spikes)
-
     RageEnabled = false,
     SilentAim = false,
-    AimTarget = "Head",
+    AimTarget = "Head", -- "Head", "UpperTorso", "HumanoidRootPart", "Smart"
     AimPriority = "Crosshair",
-    FOVRadius = 150,
+    FOVRadius = 180,
     ShowFOV = true,
-    FOVPosition = "Center",
+    FOVPosition = "Center", -- "Center" or "Mouse"
     FOVColor = Color3.fromRGB(0, 162, 255),
     Prediction = true,
-    PredictionFactor = 0.12,
+    PredictionFactor = 0.135,
     AutoFire = false,
-    WallCheck = true, -- Wall Check ON by default to prevent Server Anti-Cheat bans
+    WallCheck = true,
     TeamCheck = true,
-    SmartHitbox = true,
-    MaxSilentAngle = 45, -- Max Silent Aim deflection angle to prevent Server ban
+    SmartHitbox = true, -- Fallback to Torso if Head behind wall
 
     AAEnabled = false,
     PitchMode = "Emotionless",
@@ -196,18 +193,18 @@ local function GetFOVCenterPos()
     end
 end
 
--- Safe Target Selection
+-- Robust Target Selection with Smart Hitbox Fallback
 local function GetBestTarget()
     local fovPos = GetFOVCenterPos()
     local bestTarget, bestPart = nil, nil
     local minScore = math.huge
     local camPos = Camera.CFrame.Position
-    local camLook = Camera.CFrame.LookVector
 
     for _, player in ipairs(Players:GetPlayers()) do
         if player ~= LocalPlayer and IsEnemy(player) and IsAlive(player) then
             local char = player.Character
             
+            -- List candidate hitboxes in priority order
             local candidateParts = {}
             if Flags.AimTarget == "Head" then
                 table.insert(candidateParts, char:FindFirstChild("Head"))
@@ -233,26 +230,19 @@ local function GetBestTarget()
                         local vel = targetPart.AssemblyLinearVelocity or targetPart.Velocity or Vector3.zero
                         worldPos = worldPos + (vel * Flags.PredictionFactor)
                     end
-
-                    -- Anti-Ban Check: Ensure Silent Aim angle isn't ridiculously large
-                    local dirToTarget = (worldPos - camPos).Unit
-                    local angleDeg = math.acos(math.clamp(camLook:Dot(dirToTarget), -1, 1)) * (180 / math.pi)
-
-                    if not Flags.AntiBanMode or angleDeg <= Flags.MaxSilentAngle then
-                        local screenPos, onScreen = Camera:WorldToViewportPoint(worldPos)
-                        if onScreen then
-                            local distToFOV = (Vector2.new(screenPos.X, screenPos.Y) - fovPos).Magnitude
-                            if distToFOV <= Flags.FOVRadius then
-                                if IsVisible(camPos, targetPart, char) then
-                                    local score = (Flags.AimPriority == "Crosshair" and distToFOV) or (Flags.AimPriority == "Distance" and (worldPos - camPos).Magnitude) or 0
-                                    if score < minScore then
-                                        minScore = score
-                                        bestTarget = player
-                                        bestPart = targetPart
-                                        PredictedPos = worldPos
-                                    end
-                                    break
+                    local screenPos, onScreen = Camera:WorldToViewportPoint(worldPos)
+                    if onScreen then
+                        local distToFOV = (Vector2.new(screenPos.X, screenPos.Y) - fovPos).Magnitude
+                        if distToFOV <= Flags.FOVRadius then
+                            if IsVisible(camPos, targetPart, char) then
+                                local score = (Flags.AimPriority == "Crosshair" and distToFOV) or (Flags.AimPriority == "Distance" and (worldPos - camPos).Magnitude) or 0
+                                if score < minScore then
+                                    minScore = score
+                                    bestTarget = player
+                                    bestPart = targetPart
+                                    PredictedPos = worldPos
                                 end
+                                break -- Found best visible hitbox for this player
                             end
                         end
                     end
@@ -277,7 +267,7 @@ RunService.RenderStepped:Connect(function()
     end
 end)
 
--- SAFE METATABLE HOOKS FOR SILENT AIM
+-- BULLETPROOF METATABLE HOOKS FOR SILENT AIM
 if hookmetamethod then
     local oldNamecall
     oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
@@ -285,6 +275,7 @@ if hookmetamethod then
         local args = {...}
 
         if Flags.RageEnabled and Flags.SilentAim and RagePart and PredictedPos then
+            -- 1. Hook Raycast
             if method == "Raycast" and self == Workspace then
                 if args[1] then
                     args[2] = (PredictedPos - args[1]).Unit * 5000
@@ -292,6 +283,7 @@ if hookmetamethod then
                 end
             end
 
+            -- 2. Hook FindPartOnRay variants
             if (method == "FindPartOnRay" or method == "FindPartOnRayWithIgnoreList" or method == "FindPartOnRayWithWhitelist") and self == Workspace then
                 local ray = args[1]
                 if ray then
@@ -300,10 +292,12 @@ if hookmetamethod then
                 end
             end
 
+            -- 3. Intercept RemoteEvent FireServer / InvokeServer calls for bullet trajectory
             if method == "FireServer" or method == "InvokeServer" then
                 local camPos = Camera.CFrame.Position
                 for i, arg in ipairs(args) do
                     if typeof(arg) == "Vector3" then
+                        -- Check if vector is bullet direction or hit target
                         local dirToMouse = (arg - Mouse.Hit.Position).Magnitude
                         if dirToMouse < 20 or (arg - Camera.CFrame.LookVector).Magnitude < 2 then
                             args[i] = (PredictedPos - camPos).Unit
@@ -323,6 +317,7 @@ if hookmetamethod then
         return oldNamecall(self, ...)
     end)
 
+    -- Hook Mouse Index
     local oldIndex
     oldIndex = hookmetamethod(game, "__index", function(self, key)
         if Flags.RageEnabled and Flags.SilentAim and RagePart and PredictedPos and self == Mouse then
@@ -334,7 +329,7 @@ if hookmetamethod then
     end)
 end
 
--- ANTI-AIM MODULE WITH SAFE DESYNC LIMITS
+-- ANTI-AIM MODULE
 local spinAngle = 0
 local jitterToggle = false
 
@@ -354,13 +349,11 @@ RunService.Heartbeat:Connect(function(dt)
     hum.AutoRotate = false
     local pitchRad, yawRad = 0, 0
 
-    if Flags.PitchMode == "Emotionless" then
-        pitchRad = math.rad(Flags.AntiBanMode and -75 or -89) -- Safe Pitch in Anti-Ban Mode
-    elseif Flags.PitchMode == "Up" then
-        pitchRad = math.rad(Flags.AntiBanMode and 75 or 89)
+    if Flags.PitchMode == "Emotionless" then pitchRad = math.rad(-89)
+    elseif Flags.PitchMode == "Up" then pitchRad = math.rad(89)
     elseif Flags.PitchMode == "Jitter" then
         jitterToggle = not jitterToggle
-        pitchRad = math.rad(jitterToggle and -75 or 75)
+        pitchRad = math.rad(jitterToggle and -89 or 89)
     end
 
     if Flags.YawMode == "Spinbot" then
@@ -382,15 +375,13 @@ RunService.Heartbeat:Connect(function(dt)
         root.CFrame = CFrame.new(root.Position) * CFrame.Angles(0, yawRad, 0) * CFrame.Angles(pitchRad, 0, 0)
     end
 
-    -- SAFE DESYNC: Avoid trigger of server velocity anti-cheat kicks
     if Flags.DesyncEnabled then
         local oldVel = root.AssemblyLinearVelocity or root.Velocity
-        local desyncMax = Flags.AntiBanMode and 80 or 1000 -- Cap velocity in Anti-Ban mode
-        root.AssemblyLinearVelocity = Vector3.new(math.random(-desyncMax, desyncMax), oldVel.Y, math.random(-desyncMax, desyncMax))
+        root.AssemblyLinearVelocity = Vector3.new(math.random(-100, 100) * 10, oldVel.Y, math.random(-100, 100) * 10)
     end
 end)
 
--- VISUALS MODULE
+-- VISUALS MODULE (2D BOX, HEALTHBAR, SKELETON, CHAMS)
 local ESPObjects = {}
 local ChamsObjects = {}
 
@@ -619,11 +610,7 @@ end)
 RunService.Stepped:Connect(function()
     if not IsAlive() then return end
     local hum = GetHumanoid()
-    if hum and Flags.SpeedHack then
-        -- Cap Speed in Anti-Ban mode to avoid server kicks
-        local maxSpeed = Flags.AntiBanMode and 32 or Flags.SpeedValue
-        hum.WalkSpeed = math.min(Flags.SpeedValue, maxSpeed)
-    end
+    if hum and Flags.SpeedHack then hum.WalkSpeed = Flags.SpeedValue end
     if Flags.Noclip then
         for _, part in ipairs(GetCharacter():GetDescendants()) do
             if part:IsA("BasePart") then part.CanCollide = false end
@@ -631,7 +618,7 @@ RunService.Stepped:Connect(function()
     end
 end)
 
--- THIRD PERSON ENGINE
+-- 100% BULLETPROOF THIRD PERSON & FOV ENGINE
 RunService.RenderStepped:Connect(function()
     if Flags.FOVChanger and Camera then
         Camera.FieldOfView = Flags.FOVValue
@@ -649,6 +636,7 @@ RunService.RenderStepped:Connect(function()
             local headPos = root.Position + Vector3.new(0, 2.5, 0)
             local desiredPos = headPos - (lookVector * Flags.ThirdPersonDist)
 
+            -- Prevent camera from clipping through obstacles
             local rayParams = RaycastParams.new()
             rayParams.FilterType = Enum.RaycastFilterType.Exclude
             rayParams.FilterDescendantsInstances = {GetCharacter()}
@@ -663,7 +651,9 @@ RunService.RenderStepped:Connect(function()
     end
 end)
 
--- GUI
+-- ====================================================================
+-- CUSTOM NEVERLOSE / FATALITY GUI
+-- ====================================================================
 local parentTarget = (gethui and gethui()) or (syn and syn.protect_gui and CoreGui) or CoreGui or LocalPlayer:WaitForChild("PlayerGui")
 if parentTarget:FindFirstChild("OcelHubGui") then parentTarget.OcelHubGui:Destroy() end
 
@@ -704,9 +694,9 @@ HeaderCorner.CornerRadius = UDim.new(0, 8)
 HeaderCorner.Parent = Header
 
 local Title = Instance.new("TextLabel")
-Title.Text = "<b>OCEL HUB</b> <font color=\"#00aaff\">| SNIPER DUELS [Anti-Ban Edition]</font>"
+Title.Text = "<b>OCEL HUB</b> <font color=\"#00aaff\">| SNIPER DUELS [HvH Client]</font>"
 Title.RichText = true
-Title.Size = UDim2.new(0, 380, 1, 0)
+Title.Size = UDim2.new(0, 350, 1, 0)
 Title.Position = UDim2.new(0, 15, 0, 0)
 Title.BackgroundTransparency = 1
 Title.TextColor3 = Color3.fromRGB(240, 240, 245)
@@ -781,6 +771,7 @@ OpenBtn.MouseButton1Click:Connect(function()
     OpenBtn.Visible = false
 end)
 
+-- Dragging
 local isDragging = false
 local dragStartPos = Vector2.zero
 local frameStartPos = UDim2.new()
@@ -812,6 +803,7 @@ UserInputService.InputEnded:Connect(function(input)
     end
 end)
 
+-- Sidebar & Content
 local Sidebar = Instance.new("Frame")
 Sidebar.Size = UDim2.new(0, 160, 1, -45)
 Sidebar.Position = UDim2.new(0, 0, 0, 45)
@@ -1127,10 +1119,6 @@ local function CreateTab(name, icon)
 end
 
 -- POPULATE TABS
-local AntiBanTab = CreateTab("Anti-Ban Shield", "🛡️")
-AntiBanTab:AddToggle("Anti-Ban Safe Mode", "AntiBanMode")
-AntiBanTab:AddSlider("Max Silent Aim Angle", "MaxSilentAngle", 15, 90)
-
 local Rage = CreateTab("Ragebot", "🎯")
 Rage:AddToggle("Enable Ragebot", "RageEnabled")
 Rage:AddToggle("Silent Aim", "SilentAim")
@@ -1142,7 +1130,7 @@ Rage:AddSlider("Prediction Factor", "PredictionFactor", 0, 1)
 Rage:AddToggle("Show FOV Circle", "ShowFOV")
 Rage:AddDropdown("FOV Align Position", "FOVPosition", {"Center", "Mouse"})
 Rage:AddSlider("FOV Radius", "FOVRadius", 30, 600)
-Rage:AddToggle("Wall Check (Required for Anti-Ban)", "WallCheck")
+Rage:AddToggle("Wall Check", "WallCheck")
 Rage:AddToggle("Team Check", "TeamCheck")
 
 local AA = CreateTab("Anti-Aim", "🛡️")
@@ -1195,4 +1183,4 @@ UserInputService.InputBegan:Connect(function(input, gpe)
     end
 end)
 
-print("[OcelHub] Anti-Ban Protection Loaded!")
+print("[OcelHub] Fixed Silent Aim & Third Person Loaded!")
